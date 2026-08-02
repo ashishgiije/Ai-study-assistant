@@ -1,0 +1,6 @@
+{
+  "name": "EduMind AI",
+  "description": "Learn Faster. Ask Smarter. Study with AI. Full-stack study assistant with document isolation, RAG, and source citations.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

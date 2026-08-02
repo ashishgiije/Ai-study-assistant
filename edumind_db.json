@@ -1,0 +1,142 @@
+{
+  "chats": [
+    {
+      "id": "chat_2bclniaq3_1785440486996",
+      "title": "Machine Learning Notes",
+      "created_at": "2026-07-30T19:41:26.996Z",
+      "updated_at": "2026-07-30T19:41:51.335Z",
+      "documents": [],
+      "messages": []
+    },
+    {
+      "id": "chat_hgdvgv6i7_1785440505474",
+      "title": "Database Management",
+      "created_at": "2026-07-30T19:41:45.474Z",
+      "updated_at": "2026-07-30T19:42:03.718Z",
+      "documents": [],
+      "messages": []
+    }
+  ],
+  "messages": [
+    {
+      "id": "msg_6udabwr3g_1785440501294",
+      "chat_id": "chat_2bclniaq3_1785440486996",
+      "role": "user",
+      "content": "What is overfitting and how do we prevent it?",
+      "created_at": "2026-07-30T19:41:41.294Z"
+    },
+    {
+      "id": "msg_zrhjtuvx0_1785440501294",
+      "chat_id": "chat_2bclniaq3_1785440486996",
+      "role": "assistant",
+      "content": "Based on your study notes, here is a clear breakdown of overfitting and how to prevent it:\n\n### **What is Overfitting?**\nOverfitting occurs when a machine learning model learns the training data too closely—capturing not just the main patterns, but also the noise and specific details. Because the model memorizes the training data instead of learning general rules, it results in **poor generalization on unseen validation data**.\n\n---\n\n### **How to Prevent Overfitting**\nTo prevent overfitting (especially in deep neural networks), you can use **regularization techniques**, such as:\n\n* **L1 Regularization**\n* **L2 Weight Decay**\n* **Dropout**",
+      "sources": [
+        {
+          "document_id": "doc_kl8cpknff_1785440491360",
+          "document_name": "ml_notes.txt",
+          "page_number": 1,
+          "section": "Notes",
+          "snippet": "-e Machine Learning Unit 1\nSection: Model Evaluation\n\nOverfitting occurs when a machine learning model learns the training data too closely, including..."
+        }
+      ],
+      "suggested_questions": [
+        "What are the most common techniques used to prevent overfitting?",
+        "How can I detect if my model is overfitting during training?",
+        "What is the difference between overfitting and underfitting?"
+      ],
+      "created_at": "2026-07-30T19:41:41.294Z"
+    },
+    {
+      "id": "msg_bus5fk6fk_1785440511335",
+      "chat_id": "chat_2bclniaq3_1785440486996",
+      "role": "user",
+      "content": "What is normalization?",
+      "created_at": "2026-07-30T19:41:51.335Z"
+    },
+    {
+      "id": "msg_h83qxk6f1_1785440511335",
+      "chat_id": "chat_2bclniaq3_1785440486996",
+      "role": "assistant",
+      "content": "I couldn't find this information in the documents uploaded to this study chat.",
+      "sources": [],
+      "suggested_questions": [
+        "Can you summarize the uploaded documents?",
+        "What topics are covered in my uploaded notes?"
+      ],
+      "created_at": "2026-07-30T19:41:51.335Z"
+    },
+    {
+      "id": "msg_asm2bno8r_1785440514064",
+      "chat_id": "chat_hgdvgv6i7_1785440505474",
+      "role": "user",
+      "content": "What is overfitting?",
+      "created_at": "2026-07-30T19:41:54.064Z"
+    },
+    {
+      "id": "msg_ittujiomm_1785440514064",
+      "chat_id": "chat_hgdvgv6i7_1785440505474",
+      "role": "assistant",
+      "content": "I couldn't find this information in the documents uploaded to this study chat.",
+      "sources": [],
+      "suggested_questions": [
+        "Can you summarize the uploaded documents?",
+        "What topics are covered in my uploaded notes?"
+      ],
+      "created_at": "2026-07-30T19:41:54.064Z"
+    },
+    {
+      "id": "msg_a1pg10p4q_1785440523718",
+      "chat_id": "chat_hgdvgv6i7_1785440505474",
+      "role": "user",
+      "content": "What is database normalization?",
+      "created_at": "2026-07-30T19:42:03.718Z"
+    },
+    {
+      "id": "msg_ob6fykbs3_1785440523718",
+      "chat_id": "chat_hgdvgv6i7_1785440505474",
+      "role": "assistant",
+      "content": "Based on your uploaded document (**db_notes.txt**), here is the definition and details regarding database normalization:\n\n### **Database Normalization**\n\n**Database normalization** is the process of organizing data in a database to:\n* **Reduce redundancy** (preventing unnecessary duplication of data)\n* **Improve data integrity** (ensuring accuracy and consistency)\n\n### **Key Concept Mentioned:**\n* **Third Normal Form (3NF):** Requires that every non-key attribute must depend strictly on the primary key.",
+      "sources": [
+        {
+          "document_id": "doc_n7apya8pq_1785440508198",
+          "document_name": "db_notes.txt",
+          "page_number": 1,
+          "section": "Notes",
+          "snippet": "-e Database Management Notes\nSection: Normalization\n\nDatabase normalization is the process of organizing data in a database to reduce redundancy and i..."
+        }
+      ],
+      "suggested_questions": [
+        "What are the different normal forms, such as 1NF, 2NF, and 3NF?",
+        "What is the difference between normalization and denormalization?",
+        "Can you provide a step-by-step example of normalizing a table?"
+      ],
+      "created_at": "2026-07-30T19:42:03.718Z"
+    }
+  ],
+  "documents": [
+    {
+      "id": "doc_kl8cpknff_1785440491360",
+      "chat_id": "chat_2bclniaq3_1785440486996",
+      "file_name": "ml_notes.txt",
+      "file_type": "txt",
+      "file_path": "/app/applet/uploads/chat_2bclniaq3_1785440486996/1785440491358-644983216-ml_notes.txt",
+      "file_size": 357,
+      "status": "indexed",
+      "chunk_count": 1,
+      "created_at": "2026-07-30T19:41:31.360Z",
+      "processed_at": "2026-07-30T19:41:31.362Z"
+    },
+    {
+      "id": "doc_n7apya8pq_1785440508198",
+      "chat_id": "chat_hgdvgv6i7_1785440505474",
+      "file_name": "db_notes.txt",
+      "file_type": "txt",
+      "file_path": "/app/applet/uploads/chat_hgdvgv6i7_1785440505474/1785440508197-24895372-db_notes.txt",
+      "file_size": 276,
+      "status": "indexed",
+      "chunk_count": 1,
+      "created_at": "2026-07-30T19:41:48.198Z",
+      "processed_at": "2026-07-30T19:41:48.199Z"
+    }
+  ]
+}

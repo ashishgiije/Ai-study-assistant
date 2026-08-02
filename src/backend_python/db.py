@@ -178,10 +178,11 @@ class DBService:
             if not chat:
                 return None, []
             
+            chat_dict = chat.to_dict()
             docs = [doc.to_dict() for doc in chat.documents]
             db.delete(chat)
             db.commit()
-            return chat, docs
+            return chat_dict, docs
         finally:
             db.close()
 

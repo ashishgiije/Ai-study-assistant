@@ -1,0 +1,13 @@
+node_modules
+dist
+__pycache__
+*.pyc
+*.pyo
+.git
+.env
+.env.local
+uploads/*
+!uploads/.gitkeep
+edumind.db
+edumind_db.sqlite
+edumind_vectors.json

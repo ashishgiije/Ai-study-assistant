@@ -2,17 +2,21 @@ import express from 'express';
 import path from 'path';
 import { spawn } from 'child_process';
 import { createServer as createViteServer } from 'vite';
+import dotenv from 'dotenv';
 import { apiRouter } from './src/server/backend';
 
+dotenv.config();
+
 const app = express();
-const PORT = 3000;
-const PYTHON_PORT = 8001;
+const PORT = process.env.PORT || 3000;
+const PYTHON_PORT = process.env.PYTHON_PORT || 8001;
 
 let pythonProcess: ReturnType<typeof spawn> | null = null;
 
 function startPythonBackend() {
   console.log('[EduMind Server] Starting Python FastAPI backend (backend_python)...');
-  pythonProcess = spawn('python3', [
+  const pythonExecutable = process.platform === 'win32' ? 'python' : 'python3';
+  pythonProcess = spawn(pythonExecutable, [
     '-m', 'uvicorn', 'src.backend_python.main:app',
     '--host', '127.0.0.1',
     '--port', String(PYTHON_PORT)

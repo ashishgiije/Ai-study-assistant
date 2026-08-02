@@ -190,7 +190,7 @@ class VectorStoreService:
                     )
                 qdrant_res = self.client.query_points(
                     collection_name=config.QDRANT_COLLECTION,
-                    query_vector=query_vector,
+                    query=query_vector,
                     query_filter=models.Filter(must=must_conditions),
                     limit=top_k
                 ).points

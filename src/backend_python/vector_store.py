@@ -16,6 +16,7 @@ class VectorStoreService:
         self.memory_store: List[Dict[str, Any]] = []
         self.load_memory_store()
         self.client = None
+        self.qdrant_enabled = False
 
         if config.QDRANT_URL:
             try:
@@ -27,6 +28,7 @@ class VectorStoreService:
                     api_key=config.QDRANT_API_KEY or None
                 )
                 self._ensure_collection()
+                self.qdrant_enabled = True
             except Exception as e:
                 print(f"Qdrant Client initialization failed ({e}), using local vector store.")
 
@@ -112,7 +114,7 @@ class VectorStoreService:
         self.save_memory_store()
 
         # 2. Add to Qdrant Cloud if active
-        if self.client:
+        if self.qdrant_enabled:
             try:
                 from qdrant_client.http import models
                 qdrant_points = [
@@ -127,7 +129,7 @@ class VectorStoreService:
                     points=qdrant_points
                 )
             except Exception as e:
-                print(f"Qdrant upsert warning (fallback used): {e}")
+                print(f"Qdrant upsert error: {e}")
 
     def search(self, current_chat_id: str, query: str, document_id: Optional[str] = None, top_k: int = 10) -> List[Dict[str, Any]]:
         if not current_chat_id:
@@ -170,7 +172,7 @@ class VectorStoreService:
             })
 
         # Try Qdrant if available
-        if self.client:
+        if self.qdrant_enabled:
             try:
                 from qdrant_client.http import models
                 must_conditions = [
@@ -186,12 +188,12 @@ class VectorStoreService:
                             match=models.MatchValue(value=document_id)
                         )
                     )
-                qdrant_res = self.client.search(
+                qdrant_res = self.client.query_points(
                     collection_name=config.QDRANT_COLLECTION,
                     query_vector=query_vector,
                     query_filter=models.Filter(must=must_conditions),
                     limit=top_k
-                )
+                ).points
 
                 if qdrant_res:
                     return [
@@ -211,7 +213,7 @@ class VectorStoreService:
                         for res in qdrant_res
                     ]
             except Exception as e:
-                print(f"Qdrant search warning, using memory store result: {e}")
+                print(f"Qdrant search error, using memory store result: {e}")
 
         return top_results
 

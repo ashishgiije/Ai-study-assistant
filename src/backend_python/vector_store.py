@@ -137,12 +137,44 @@ class VectorStoreService:
 
         query_vector = generate_embedding(query)
 
-        # MANDATORY FILTER: chat_id == current_chat_id and optional document_id
-        isolated_points = [
-            p for p in self.memory_store
-            if p["payload"].get("chat_id") == current_chat_id
-            and (not document_id or p["payload"].get("document_id") == document_id)
-        ]
+        # Try Qdrant search if enabled
+        if self.qdrant_enabled:
+            try:
+                from qdrant_client.http import models
+                must_conditions = [models.FieldCondition(key="chat_id", match=models.MatchValue(value=current_chat_id))]
+                if document_id:
+                    must_conditions.append(models.FieldCondition(key="document_id", match=models.MatchValue(value=document_id)))
+                
+                qdrant_res = self.client.query_points(
+                    collection_name=config.QDRANT_COLLECTION,
+                    query=query_vector,
+                    query_filter=models.Filter(must=must_conditions),
+                    limit=top_k
+                ).points
+
+                if qdrant_res:
+                    return [
+                        {
+                            "chunk_id": res.payload.get("chunk_id", res.id),
+                            "chat_id": res.payload["chat_id"],
+                            "document_id": res.payload["document_id"],
+                            "document_name": res.payload["document_name"],
+                            "file_type": res.payload["file_type"],
+                            "page_number": res.payload.get("page_number"),
+                            "section": res.payload.get("section"),
+                            "chunk_index": res.payload["chunk_index"],
+                            "text": res.payload["text"],
+                            "enriched_text": res.payload["enriched_text"],
+                            "score": res.score
+                        }
+                        for res in qdrant_res
+                    ]
+            except Exception as e:
+                print(f"Qdrant search error, falling back to local memory store: {e}")
+
+        isolated_points = [p for p in self.memory_store if p["payload"]["chat_id"] == current_chat_id]
+        if document_id:
+            isolated_points = [p for p in isolated_points if p["payload"]["document_id"] == document_id]
 
         scored_points = []
         for p in isolated_points:
@@ -170,50 +202,6 @@ class VectorStoreService:
                 "enriched_text": payload["enriched_text"],
                 "score": sp["score"]
             })
-
-        # Try Qdrant if available
-        if self.qdrant_enabled:
-            try:
-                from qdrant_client.http import models
-                must_conditions = [
-                    models.FieldCondition(
-                        key="chat_id",
-                        match=models.MatchValue(value=current_chat_id)
-                    )
-                ]
-                if document_id:
-                    must_conditions.append(
-                        models.FieldCondition(
-                            key="document_id",
-                            match=models.MatchValue(value=document_id)
-                        )
-                    )
-                qdrant_res = self.client.query_points(
-                    collection_name=config.QDRANT_COLLECTION,
-                    query=query_vector,
-                    query_filter=models.Filter(must=must_conditions),
-                    limit=top_k
-                ).points
-
-                if qdrant_res:
-                    return [
-                        {
-                            "chunk_id": res.payload.get("chunk_id", res.id),
-                            "chat_id": res.payload["chat_id"],
-                            "document_id": res.payload["document_id"],
-                            "document_name": res.payload["document_name"],
-                            "file_type": res.payload["file_type"],
-                            "page_number": res.payload.get("page_number"),
-                            "section": res.payload.get("section"),
-                            "chunk_index": res.payload["chunk_index"],
-                            "text": res.payload["text"],
-                            "enriched_text": res.payload["enriched_text"],
-                            "score": res.score
-                        }
-                        for res in qdrant_res
-                    ]
-            except Exception as e:
-                print(f"Qdrant search error, using memory store result: {e}")
 
         return top_results
 

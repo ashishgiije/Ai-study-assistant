@@ -7,6 +7,12 @@ _st_model = None
 def get_sentence_transformer():
     global _st_model
     if _st_model is None:
+        # If USE_FALLBACK_EMBEDDINGS=true, skip model download entirely
+        # This is necessary on Render/Koyeb free tier (512MB RAM) to prevent OOM crash
+        if config.USE_FALLBACK_EMBEDDINGS:
+            print("[EduMind] USE_FALLBACK_EMBEDDINGS=true — using built-in hash embeddings (no model download).")
+            _st_model = "fallback"
+            return _st_model
         try:
             from sentence_transformers import SentenceTransformer
             print(f"Loading embedding model: {config.EMBEDDING_MODEL}...")

@@ -3,6 +3,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
+import http from 'http';
 import { apiRouter } from './src/server/backend';
 
 dotenv.config();
@@ -12,6 +13,7 @@ const PORT = process.env.PORT || 3000;
 const PYTHON_PORT = process.env.PYTHON_PORT || 8001;
 
 let pythonProcess: ReturnType<typeof spawn> | null = null;
+let pythonReady = false;
 
 function startPythonBackend() {
   console.log('[EduMind Server] Starting Python FastAPI backend (backend_python)...');
@@ -30,8 +32,45 @@ function startPythonBackend() {
   });
 
   pythonProcess.on('exit', (code, signal) => {
+    pythonReady = false;
     console.warn(`[EduMind Server] Python backend process exited with code ${code}, signal ${signal}`);
+    // Auto-restart Python backend if it crashes unexpectedly
+    if (code !== 0 && code !== null) {
+      console.log('[EduMind Server] Auto-restarting Python backend in 5 seconds...');
+      setTimeout(startPythonBackend, 5000);
+    }
   });
+
+  // Poll Python /health until it responds, then mark pythonReady = true
+  waitForPythonBackend();
+}
+
+function waitForPythonBackend(maxAttempts = 30, intervalMs = 3000) {
+  let attempts = 0;
+  const check = () => {
+    const req = http.get(`http://127.0.0.1:${PYTHON_PORT}/health`, (res) => {
+      if (res.statusCode === 200) {
+        pythonReady = true;
+        console.log('[EduMind Server] ✅ Python FastAPI backend is ready and healthy!');
+      } else {
+        retry();
+      }
+    });
+    req.on('error', retry);
+    req.setTimeout(2000, () => { req.destroy(); retry(); });
+  };
+
+  const retry = () => {
+    attempts++;
+    if (attempts < maxAttempts) {
+      console.log(`[EduMind Server] Waiting for Python backend... (attempt ${attempts}/${maxAttempts})`);
+      setTimeout(check, intervalMs);
+    } else {
+      console.error('[EduMind Server] ❌ Python backend did not become ready in time. Check logs.');
+    }
+  };
+
+  setTimeout(check, 3000);
 }
 
 startPythonBackend();
@@ -43,7 +82,11 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'EduMind AI Express & Python FastAPI RAG Backend' });
+  res.json({
+    status: 'ok',
+    pythonBackendReady: pythonReady,
+    service: 'EduMind AI Express & Python FastAPI RAG Backend'
+  });
 });
 
 async function startServer() {
@@ -70,4 +113,3 @@ async function startServer() {
 }
 
 startServer();
-

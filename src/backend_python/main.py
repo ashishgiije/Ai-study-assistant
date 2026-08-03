@@ -163,6 +163,10 @@ def get_documents(chat_id: str):
 
 @app.post("/api/chats/{chat_id}/documents", status_code=status.HTTP_201_CREATED)
 async def upload_documents(chat_id: str, files: List[UploadFile] = File(...)):
+    """Upload one or more documents, extract text, chunk, embed and index.
+
+    Returns a summary with the number of processed documents and their DB records.
+    """
     chat = db_service.get_chat(chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
@@ -197,7 +201,7 @@ async def upload_documents(chat_id: str, files: List[UploadFile] = File(...)):
             file_name=file.filename,
             file_type=file_ext,
             file_path=saved_file_path,
-            file_size=file_size
+            file_size=file_size,
         )
 
         db_service.update_document_status(doc_id, "processing")
@@ -208,12 +212,10 @@ async def upload_documents(chat_id: str, files: List[UploadFile] = File(...)):
                 chat_id=chat_id,
                 file_path=saved_file_path,
                 file_name=file.filename,
-                file_type=file_ext
+                file_type=file_ext,
             )
-
             chunks = chunk_document(processed_doc)
             vector_store.add_chunks(chunks)
-
             updated_doc = db_service.update_document_status(doc_id, "indexed", len(chunks))
             if updated_doc:
                 uploaded_documents.append(updated_doc)
@@ -223,15 +225,16 @@ async def upload_documents(chat_id: str, files: List[UploadFile] = File(...)):
                 doc_id,
                 "failed",
                 0,
-                str(proc_err) or "Processing error"
+                str(proc_err) or "Processing error",
             )
             if failed_doc:
                 uploaded_documents.append(failed_doc)
 
     return {
         "message": f"{len(uploaded_documents)} document(s) uploaded and processed successfully",
-        "documents": uploaded_documents
+        "documents": uploaded_documents,
     }
+
 
 @app.delete("/api/chats/{chat_id}/documents/{document_id}")
 def delete_document(chat_id: str, document_id: str):

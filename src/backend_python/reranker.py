@@ -22,6 +22,18 @@ def rerank_chunks(
     top_n: int = 5,
     min_relevance_score: float = 0.12
 ) -> Dict[str, Any]:
+    # Fast path: if number of chunks is small, skip loading the heavy cross-encoder model
+    if not chunks:
+        return {"is_relevant": False, "chunks": [], "max_score": 0.0}
+    if len(chunks) <= top_n:
+        # Compute max score from existing chunk scores (if any) and decide relevance
+        max_score = max((c.get("score", 0.0) for c in chunks), default=0.0)
+        is_relevant = max_score >= min_relevance_score
+        return {"is_relevant": is_relevant, "chunks": chunks if is_relevant else [], "max_score": max_score}
+    
+    # Existing logic continues below
+    model = get_cross_encoder()
+
     if not chunks:
         return {"is_relevant": False, "chunks": [], "max_score": 0.0}
 

@@ -147,7 +147,7 @@ class VectorStoreService:
                 
                 qdrant_res = self.client.query_points(
                     collection_name=config.QDRANT_COLLECTION,
-                    query=query_vector,
+                    vector=query_vector,
                     query_filter=models.Filter(must=must_conditions),
                     limit=top_k
                 ).points
@@ -172,22 +172,26 @@ class VectorStoreService:
             except Exception as e:
                 print(f"Qdrant search error, falling back to local memory store: {e}")
 
+        # Local fallback: filter points for the current chat (and optional document)
         isolated_points = [p for p in self.memory_store if p["payload"]["chat_id"] == current_chat_id]
         if document_id:
             isolated_points = [p for p in isolated_points if p["payload"]["document_id"] == document_id]
 
+        if not isolated_points:
+            return []  # No vectors for this chat/document
+
+        # Compute cosine similarity for each candidate
         scored_points = []
         for p in isolated_points:
             similarity = cosine_similarity(query_vector, p["vector"])
-            scored_points.append({
-                "point": p,
-                "score": similarity
-            })
+            scored_points.append({"point": p, "score": similarity})
 
-        scored_points.sort(key=lambda x: x["score"], reverse=True)
+        # Use nlargest for efficient top‑k selection
+        from heapq import nlargest
+        top_scored = nlargest(top_k, scored_points, key=lambda x: x["score"])
 
         top_results = []
-        for sp in scored_points[:top_k]:
+        for sp in top_scored:
             payload = sp["point"]["payload"]
             top_results.append({
                 "chunk_id": payload["chunk_id"],
@@ -200,7 +204,7 @@ class VectorStoreService:
                 "chunk_index": payload["chunk_index"],
                 "text": payload["text"],
                 "enriched_text": payload["enriched_text"],
-                "score": sp["score"]
+                "score": sp["score"],
             })
 
         return top_results

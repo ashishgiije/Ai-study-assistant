@@ -28,16 +28,13 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    print("[EduMind Python Backend] Pre-loading embedding model and initializing vector store...")
-    try:
-        from src.backend_python.embeddings import get_sentence_transformer
-        get_sentence_transformer()
-    except Exception as e:
-        print(f"[EduMind Python Backend] Model warm-up warning: {e}")
+    print(f"[EduMind Python Backend] ✅ FastAPI server started and ready on port {config.PORT}")
+    print("[EduMind Python Backend] Embedding and vector models will be lazy-loaded on demand.")
 
 # Ensure root upload directory
 upload_root_dir = os.path.abspath(config.UPLOAD_DIRECTORY)
 os.makedirs(upload_root_dir, exist_ok=True)
+
 
 
 class CreateChatRequest(BaseModel):
@@ -270,4 +267,5 @@ def delete_document(chat_id: str, document_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=config.PORT)
+

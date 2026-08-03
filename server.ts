@@ -20,12 +20,13 @@ function startPythonBackend() {
   const pythonExecutable = process.platform === 'win32' ? 'python' : 'python3';
   pythonProcess = spawn(pythonExecutable, [
     '-m', 'uvicorn', 'src.backend_python.main:app',
-    '--host', '127.0.0.1',
+    '--host', '0.0.0.0',
     '--port', String(PYTHON_PORT)
   ], {
     stdio: 'inherit',
     env: { ...process.env },
   });
+
 
   pythonProcess.on('error', (err) => {
     console.error('[EduMind Server] Error spawning Python backend:', err);

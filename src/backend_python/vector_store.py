@@ -17,20 +17,27 @@ class VectorStoreService:
         self.load_memory_store()
         self.client = None
         self.qdrant_enabled = False
+        self._qdrant_initialized = False
+
+    def _init_qdrant_lazy(self):
+        if self._qdrant_initialized:
+            return
+        self._qdrant_initialized = True
 
         if config.QDRANT_URL:
             try:
                 from qdrant_client import QdrantClient
-                from qdrant_client.http import models
-
                 self.client = QdrantClient(
                     url=config.QDRANT_URL,
-                    api_key=config.QDRANT_API_KEY or None
+                    api_key=config.QDRANT_API_KEY or None,
+                    timeout=10.0
                 )
                 self._ensure_collection()
                 self.qdrant_enabled = True
+                print("[EduMind VectorStore] Connected to Qdrant Cloud.")
             except Exception as e:
-                print(f"Qdrant Client initialization failed ({e}), using local vector store.")
+                print(f"[EduMind VectorStore] Qdrant Client init failed ({e}), using local vector store.")
+
 
     def load_memory_store(self):
         if os.path.exists(VECTOR_DB_FILE):
@@ -86,6 +93,7 @@ class VectorStoreService:
         if not chunks:
             return
 
+        self._init_qdrant_lazy()
         points = []
         for chunk in chunks:
             vector = generate_embedding(chunk["enriched_text"])
@@ -135,7 +143,9 @@ class VectorStoreService:
         if not current_chat_id:
             raise ValueError("Search failed: chat_id filter is strictly required")
 
+        self._init_qdrant_lazy()
         query_vector = generate_embedding(query)
+
 
         # Try Qdrant search if enabled
         if self.qdrant_enabled:
@@ -210,6 +220,7 @@ class VectorStoreService:
         return top_results
 
     def delete_document_vectors(self, chat_id: str, document_id: str):
+        self._init_qdrant_lazy()
         self.memory_store = [
             p for p in self.memory_store
             if not (p["payload"].get("chat_id") == chat_id and p["payload"].get("document_id") == document_id)
@@ -234,11 +245,13 @@ class VectorStoreService:
                 print(f"Qdrant delete document vectors error: {e}")
 
     def delete_chat_vectors(self, chat_id: str):
+        self._init_qdrant_lazy()
         self.memory_store = [
             p for p in self.memory_store
             if p["payload"].get("chat_id") != chat_id
         ]
         self.save_memory_store()
+
 
         if self.client:
             try:

@@ -1,5 +1,14 @@
+import os
 import math
 from typing import List
+
+# Limit thread counts to conserve memory on constrained platforms (e.g., Render/Koyeb free tiers)
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 from src.backend_python.config import config
 
 _st_model = None
@@ -14,6 +23,8 @@ def get_sentence_transformer():
             _st_model = "fallback"
             return _st_model
         try:
+            import torch
+            torch.set_num_threads(1)
             from sentence_transformers import SentenceTransformer
             print(f"Loading embedding model: {config.EMBEDDING_MODEL}...")
             _st_model = SentenceTransformer(config.EMBEDDING_MODEL)
@@ -22,6 +33,7 @@ def get_sentence_transformer():
             print(f"Warning: Could not load SentenceTransformer ({e}). Using deterministic fallback embeddings.")
             _st_model = "fallback"
     return _st_model
+
 
 def fallback_embedding(text: str, dim: int = 384) -> List[float]:
     """Generates a normalized 384-dim embedding from text hash features."""

@@ -26,9 +26,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+def on_startup():
+    print("[EduMind Python Backend] Pre-loading embedding model and initializing vector store...")
+    try:
+        from src.backend_python.embeddings import get_sentence_transformer
+        get_sentence_transformer()
+    except Exception as e:
+        print(f"[EduMind Python Backend] Model warm-up warning: {e}")
+
 # Ensure root upload directory
 upload_root_dir = os.path.abspath(config.UPLOAD_DIRECTORY)
 os.makedirs(upload_root_dir, exist_ok=True)
+
 
 class CreateChatRequest(BaseModel):
     title: Optional[str] = "New Study Session"

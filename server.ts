@@ -34,8 +34,8 @@ function startPythonBackend() {
   pythonProcess.on('exit', (code, signal) => {
     pythonReady = false;
     console.warn(`[EduMind Server] Python backend process exited with code ${code}, signal ${signal}`);
-    // Auto-restart Python backend if it crashes unexpectedly
-    if (code !== 0 && code !== null) {
+    // Auto-restart Python backend if it crashes unexpectedly (unless terminated by signal)
+    if (code !== 0 && code !== null && signal !== 'SIGTERM' && signal !== 'SIGINT') {
       console.log('[EduMind Server] Auto-restarting Python backend in 5 seconds...');
       setTimeout(startPythonBackend, 5000);
     }
@@ -45,7 +45,7 @@ function startPythonBackend() {
   waitForPythonBackend();
 }
 
-function waitForPythonBackend(maxAttempts = 30, intervalMs = 3000) {
+function waitForPythonBackend(maxAttempts = 60, intervalMs = 2000) {
   let attempts = 0;
   const check = () => {
     const req = http.get(`http://127.0.0.1:${PYTHON_PORT}/health`, (res) => {
@@ -63,17 +63,32 @@ function waitForPythonBackend(maxAttempts = 30, intervalMs = 3000) {
   const retry = () => {
     attempts++;
     if (attempts < maxAttempts) {
-      console.log(`[EduMind Server] Waiting for Python backend... (attempt ${attempts}/${maxAttempts})`);
+      if (attempts % 5 === 0) {
+        console.log(`[EduMind Server] Waiting for Python backend... (attempt ${attempts}/${maxAttempts})`);
+      }
       setTimeout(check, intervalMs);
     } else {
       console.error('[EduMind Server] ❌ Python backend did not become ready in time. Check logs.');
     }
   };
 
-  setTimeout(check, 3000);
+  setTimeout(check, 2000);
 }
 
 startPythonBackend();
+
+// Graceful process shutdown handling to prevent orphan python processes and SIGTERM crash logs
+const handleShutdown = (signal: string) => {
+  console.log(`[EduMind Server] Received ${signal}. Shutting down services cleanly...`);
+  if (pythonProcess) {
+    pythonProcess.kill('SIGTERM');
+    pythonProcess = null;
+  }
+  process.exit(0);
+};
+
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+process.on('SIGINT', () => handleShutdown('SIGINT'));
 
 // Mount API routes FIRST so proxy gets unconsumed raw body streams
 app.use('/api', apiRouter);
@@ -113,3 +128,4 @@ async function startServer() {
 }
 
 startServer();
+

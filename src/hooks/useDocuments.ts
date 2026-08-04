@@ -17,8 +17,10 @@ export function useDocuments(chatId: string | null) {
       setLoading(true);
       setError(null);
       const docs = await api.getDocuments(chatId);
-      setDocuments(docs);
+      setDocuments(Array.isArray(docs) ? docs : []);
     } catch (err: any) {
+      console.warn('Error loading documents:', err);
+      setDocuments([]);
       setError(err.message || 'Error loading documents');
     } finally {
       setLoading(false);

@@ -166,20 +166,29 @@ def post_message(chat_id: str, req: PostMessageRequest):
 
 @app.get("/api/chats/{chat_id}/documents")
 def get_documents(chat_id: str):
-    return db_service.get_documents(chat_id)
+    try:
+        return db_service.get_documents(chat_id)
+    except Exception as e:
+        print(f"Error fetching documents for chat {chat_id}: {e}")
+        return []
 
 @app.post("/api/chats/{chat_id}/documents", status_code=status.HTTP_201_CREATED)
-async def upload_documents(chat_id: str, files: List[UploadFile] = File(...)):
-    """Upload one or more documents, extract text, chunk, embed and index.
-
-    Returns a summary with the number of processed documents and their DB records.
-    """
-    chat = db_service.get_chat(chat_id)
+async def upload_documents(
+    chat_id: str,
+    files: List[UploadFile] = File(...),
+    x_user_id: Optional[str] = Header(None, alias="x-user-id"),
+    authorization: Optional[str] = Header(None, alias="authorization")
+):
+    """Upload one or more documents, extract text, chunk, embed and index."""
+    user_id = extract_user_id(x_user_id, authorization)
+    chat = db_service.get_chat(chat_id, user_id=user_id)
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        # Auto-create chat session if uploading to a new chat
+        chat = db_service.create_chat(chat_id=chat_id, title="New Study Session", user_id=user_id)
 
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded")
+
 
     chat_upload_dir = os.path.join(upload_root_dir, chat_id)
     os.makedirs(chat_upload_dir, exist_ok=True)

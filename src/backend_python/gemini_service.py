@@ -49,6 +49,20 @@ Follow these rules strictly:
 "I couldn’t find this information in the documents uploaded to this study chat."
 Do NOT alter this exact phrase when information is missing."""
 
+def get_valid_model_name(raw_model: str) -> str:
+    if not raw_model or not raw_model.strip():
+        return "gemini-2.5-flash"
+    m = raw_model.strip().lower()
+    if m in ["3.5", "gemini-3.5", "3.5-flash"]:
+        return "gemini-3.5-flash"
+    if m in ["2.5", "gemini-2.5", "2.5-flash"]:
+        return "gemini-2.5-flash"
+    if m in ["1.5", "gemini-1.5", "1.5-flash"]:
+        return "gemini-1.5-flash"
+    if not m.startswith("gemini-"):
+        return f"gemini-{m}"
+    return m
+
 def generate_rag_answer(question: str, context_chunks: List[Dict[str, Any]]) -> str:
     if not context_chunks:
         return "I couldn’t find this information in the documents uploaded to this study chat."
@@ -81,10 +95,10 @@ USER QUESTION:
 Provide a clear, accurate, and structured answer strictly based on the context above."""
 
     try:
-        def _call():
+        def _call(model_name: str):
             from google.genai import types
             return client.models.generate_content(
-                model=config.GEMINI_MODEL,
+                model=model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
@@ -92,7 +106,17 @@ Provide a clear, accurate, and structured answer strictly based on the context a
                 )
             )
 
-        response = call_gemini_with_retry(_call)
+        target_model = get_valid_model_name(config.GEMINI_MODEL)
+        try:
+            response = call_gemini_with_retry(lambda: _call(target_model))
+        except Exception as model_err:
+            err_msg = str(model_err).lower()
+            if "404" in err_msg or "not_found" in err_msg or "not found" in err_msg:
+                print(f"[Gemini Service] Model '{target_model}' not found on Google AI API. Falling back to 'gemini-2.5-flash'...")
+                response = call_gemini_with_retry(lambda: _call("gemini-2.5-flash"))
+            else:
+                raise model_err
+
         text = response.text if response and response.text else ""
         if text.strip():
             return text.strip()
@@ -104,6 +128,7 @@ Provide a clear, accurate, and structured answer strictly based on the context a
         if "API_KEY_INVALID" in err_str or "403" in err_str:
             return "🔑 Invalid or missing Gemini API key. Please check your GEMINI_API_KEY configuration in Settings > Secrets."
         return f"I encountered an issue generating the response: {err_str}. Please try asking again in a few moments."
+
 
 def generate_suggested_questions(question: str, answer_text: str) -> List[str]:
     fallback_questions = [
@@ -124,14 +149,16 @@ def generate_suggested_questions(question: str, answer_text: str) -> List[str]:
     try:
         def _call():
             from google.genai import types
+            target_model = get_valid_model_name(config.GEMINI_MODEL)
             return client.models.generate_content(
-                model=config.GEMINI_MODEL,
+                model=target_model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     temperature=0.3
                 )
             )
+
 
         response = call_gemini_with_retry(_call, max_retries=1, initial_delay=1.0)
         if response and response.text:

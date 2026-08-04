@@ -14,10 +14,11 @@ def generate_general_study_answer(question: str) -> str:
     system_instruction = "You are EduMind AI, a helpful, encouraging academic study assistant. Provide clear, structured, markdown-formatted study explanations."
 
     try:
-        def _call():
+        from src.backend_python.gemini_service import get_valid_model_name
+        def _call(model_name: str):
             from google.genai import types
             return client.models.generate_content(
-                model=config.GEMINI_MODEL,
+                model=model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
@@ -25,7 +26,16 @@ def generate_general_study_answer(question: str) -> str:
                 )
             )
 
-        response = call_gemini_with_retry(_call)
+        target_model = get_valid_model_name(config.GEMINI_MODEL)
+        try:
+            response = call_gemini_with_retry(lambda: _call(target_model))
+        except Exception as model_err:
+            err_msg = str(model_err).lower()
+            if "404" in err_msg or "not_found" in err_msg or "not found" in err_msg:
+                response = call_gemini_with_retry(lambda: _call("gemini-2.5-flash"))
+            else:
+                raise model_err
+
         text = response.text if response and response.text else ""
         if text.strip():
             return text.strip()
@@ -33,6 +43,7 @@ def generate_general_study_answer(question: str) -> str:
     except Exception as err:
         err_str = str(err)
         return f"EduMind AI servers are currently experiencing high demand: {err_str}"
+
 
 def process_question(chat_id: str, question: str, document_id: Optional[str] = None) -> Dict[str, Any]:
     # 1. Save user question message to DB

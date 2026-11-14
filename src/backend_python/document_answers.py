@@ -2,6 +2,7 @@ import re
 from typing import Optional
 
 from src.backend_python.document_processor import extract_document_text
+from src.backend_python.gemini_service import DEFINITION_QUESTION, find_definition
 
 PHONE_REQUEST = re.compile(r"\b(?:phone|mobile|telephone|cell(?:phone)?)\s+(?:number|no\.?)(?!\w)", re.I)
 PHONE = re.compile(r"(?<![\d.])(?:\+\d{1,3}[ .-]?)?(?:\(\d{2,4}\)|\d{2,5})[ .-]?\d{3,5}[ .-]?\d{4}(?!\d)")
@@ -11,6 +12,30 @@ QUESTION_START = re.compile(r"^\s*(?:(?:Q(?:uestion)?[.\s]*)(\d+)\s*[.):\-]?|(\d
 PROJECT_HEADING = re.compile(r"^(?:(?:academic|personal|selected|technical|key|recent|software|major)\s+)*projects?(?:\s+(?:details?|experience|portfolio))?\s*:?$", re.I)
 NEXT_SECTION = re.compile(r"^(?:education|skills|technical skills|experience|work experience|professional experience|employment|certifications?|awards?|achievements?|languages|interests|references|publications?|contact(?: information)?|volunteer(?:ing| experience)?|summary|profile)\s*:?$", re.I)
 NUMBER_WORDS = {"one": 1, "two": 2, "to": 2, "too": 2, "three": 3, "four": 4, "five": 5}
+
+
+def find_definition_in_documents(question: str, documents: list[dict]) -> Optional[tuple[str, list[dict]]]:
+    if not DEFINITION_QUESTION.fullmatch(question.strip()):
+        return None
+    passages = []
+    for document in documents:
+        try:
+            pages = extract_document_text(
+                document["id"], document["chat_id"], document["file_path"],
+                document["file_name"], document["file_type"],
+            )["pages"]
+        except (OSError, ValueError):
+            continue
+        passages.extend({
+            "text": page["text"], "document_id": document["id"], "document_name": document["file_name"],
+            "file_type": document["file_type"], "page_number": page.get("page_number"), "section": page.get("section"),
+        } for page in pages)
+    answer = find_definition(question, passages)
+    if answer:
+        sources = [{**passage, "citation_text": answer} for passage in passages
+                   if answer in " ".join(passage["text"].split())]
+        return answer, sources[:1]
+    return None
 
 
 def extract_requested_content(question: str, documents: list[dict]) -> Optional[tuple[str, list[dict]]]:

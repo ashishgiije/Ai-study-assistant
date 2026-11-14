@@ -4,7 +4,7 @@ from src.backend_python.vector_store import vector_store
 from src.backend_python.reranker import rerank_chunks
 from src.backend_python.gemini_service import NO_DOCUMENT_ANSWER, comparison_topics, find_definition, generate_rag_answer, get_genai_client, call_gemini_with_retry
 from src.backend_python.config import config
-from src.backend_python.document_answers import extract_requested_content
+from src.backend_python.document_answers import extract_requested_content, find_definition_in_documents
 
 def generate_general_study_answer(question: str) -> str:
     client = get_genai_client()
@@ -63,7 +63,15 @@ def process_question(chat_id: str, question: str, document_id: Optional[str] = N
     indexed_docs = {doc["id"] for doc in selected_docs}
     extracted = extract_requested_content(question, selected_docs)
 
-    if not chat_docs:
+    if document_id and document_id not in indexed_docs:
+        answer_text = "The selected document is unavailable or hasn't finished indexing. Select an indexed document or upload it again."
+        citations = []
+        suggested_questions = []
+    elif chat_docs and not indexed_docs:
+        answer_text = "There are no indexed documents in this chat. Check their upload status and upload any failed files again."
+        citations = []
+        suggested_questions = []
+    elif not chat_docs:
         # General conversation study mode
         answer_text = generate_general_study_answer(question)
         citations = []
@@ -108,7 +116,13 @@ def process_question(chat_id: str, question: str, document_id: Optional[str] = N
             ][:1]
             answer_text = definition
         else:
-            answer_text, evidence_chunks = generate_rag_answer(question, final_chunks)
+            scanned_definition = find_definition_in_documents(question, selected_docs) if not topics else None
+            if scanned_definition:
+                answer_text, evidence_chunks = scanned_definition
+            else:
+                answer_text, evidence_chunks = generate_rag_answer(question, final_chunks)
+                if not retrieved_chunks:
+                    answer_text = "The document search index is unavailable for this chat. Upload the document again to rebuild it."
 
         citations = []
         seen = set()

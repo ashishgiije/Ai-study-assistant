@@ -117,6 +117,23 @@ class UploadTests(unittest.TestCase):
                 self.assertEqual(result["answer"], expected)
                 self.assertEqual(result["sources"][0]["document_id"], doc["id"])
 
+    def test_definition_recovers_from_a_missing_vector_index(self):
+        doc = self.upload("hadoop.txt", b"Hadoop Distributed File System (HDFS) stores files across multiple machines.").json()["documents"][0]
+        with patch("src.backend_python.vector_store.vector_store.search", return_value=[]):
+            result = self.client.post(self.chat + "/messages", json={
+                "question": "what is HDFS?", "document_id": doc["id"],
+            }).json()
+        self.assertIn("Hadoop Distributed File System", result["answer"])
+        self.assertEqual(result["sources"][0]["document_id"], doc["id"])
+
+    def test_stale_document_selection_reports_upload_problem(self):
+        self.upload("other.txt", b"Nothing about Hadoop here.")
+        result = self.client.post(self.chat + "/messages", json={
+            "question": "what is HDFS?", "document_id": "missing-doc",
+        }).json()
+        self.assertIn("selected document is unavailable", result["answer"])
+        self.assertEqual(result["sources"], [])
+
     def test_narrow_question_returns_only_the_matching_sentence(self):
         self.upload("mixed.txt", b"Chlorophyll absorbs light. Photosynthesis turns light into chemical energy. "
                                  b"Cellular respiration occurs in mitochondria. The nucleus contains DNA.")

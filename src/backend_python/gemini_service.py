@@ -76,9 +76,47 @@ def get_valid_model_name(raw_model: str) -> str:
 
 NO_DOCUMENT_ANSWER = "I couldn’t find this information in the documents uploaded to this study chat."
 
+DEFINITION_QUESTION = re.compile(
+    r"^(?:please\s+)?(?:(?:what\s+(?:is|are)\s+|define\s+)(?P<term>.+?)"
+    r"|what\s+does\s+(?P<acronym>.+?)\s+stand\s+for)[?.!]*$",
+    re.I,
+)
+
+
+def find_definition(question: str, chunks: List[Dict[str, Any]]) -> str | None:
+    match = DEFINITION_QUESTION.fullmatch(question.strip())
+    if not match:
+        return None
+    subject = re.sub(r"^(?:an?|the)\s+", "", match.group("term") or match.group("acronym"), flags=re.I)
+    subject_pattern = re.escape(subject)
+    expansion = None
+    if subject.isalpha() and 2 <= len(subject) <= 10:
+        words = r"[\w-]+\s+" * len(subject)
+        expansion = re.compile(rf"\b({words})\({subject_pattern}\)", re.I)
+    predicate = r"(?:is|are|means|stands? for|refers? to|stores?|manages?|collects?|processes?|provides?|performs?|handles?|uses?)\b"
+    direct = re.compile(rf"(?:^|[\n.!?]\s*)[ \t]*((?:the\s+)?{subject_pattern}\s+{predicate})", re.I)
+    definitions = []
+    for chunk in chunks:
+        text = chunk["text"]
+        for entry in expansion.finditer(text) if expansion else ():
+            initials = "".join(word[0] for word in entry.group(1).split())
+            if initials.casefold() == subject.casefold():
+                if match.group("acronym"):
+                    definitions.append((2, " ".join(entry.group(1).split())))
+                elif re.match(rf"\s+{predicate}", text[entry.end():], re.I):
+                    sentence = re.split(r"(?<=[.!?])\s+|\n\s*\n", text[entry.start():], maxsplit=1)[0]
+                    definitions.append((2, " ".join(sentence.split())))
+        for entry in direct.finditer(text):
+            sentence = re.split(r"(?<=[.!?])\s+|\n\s*\n", text[entry.start(1):], maxsplit=1)[0]
+            definitions.append((1, " ".join(sentence.split())))
+    return max(definitions, key=lambda item: item[0])[1] if definitions else None
+
 
 def select_answer_sentences(question: str, chunks: List[Dict[str, Any]]) -> str:
     """Rank individual evidence sentences for the local answer path."""
+    definition = find_definition(question, chunks)
+    if definition:
+        return definition
     query = set(search_terms(question))
     is_summary = bool(re.match(r"^(?:please\s+)?(?:summari[sz]e|give (?:me )?(?:a |an )?(?:summary|overview))\b", question.strip(), re.I))
     wants_detail = bool(re.search(r"\b(?:details?|explain|describe|elaborate|steps|reasons|list|all|how|why)\b", question, re.I))

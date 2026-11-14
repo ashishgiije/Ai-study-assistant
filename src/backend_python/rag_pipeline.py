@@ -2,7 +2,7 @@ from typing import Dict, Any, List, Optional
 from src.backend_python.db import db_service
 from src.backend_python.vector_store import vector_store
 from src.backend_python.reranker import rerank_chunks
-from src.backend_python.gemini_service import NO_DOCUMENT_ANSWER, generate_rag_answer, get_genai_client, call_gemini_with_retry
+from src.backend_python.gemini_service import NO_DOCUMENT_ANSWER, find_definition, generate_rag_answer, get_genai_client, call_gemini_with_retry
 from src.backend_python.config import config
 from src.backend_python.document_answers import extract_requested_content
 
@@ -91,16 +91,17 @@ def process_question(chat_id: str, question: str, document_id: Optional[str] = N
         is_relevant = rerank_result["is_relevant"]
         final_chunks = rerank_result["chunks"]
 
-        if not is_relevant or not final_chunks:
+        definition = find_definition(question, retrieved_chunks)
+        if not definition and (not is_relevant or not final_chunks):
             answer_text = NO_DOCUMENT_ANSWER
             citations = []
             suggested_questions = []
         else:
-            answer_text = generate_rag_answer(question, final_chunks)
+            answer_text = definition or generate_rag_answer(question, final_chunks)
 
             citations = []
             seen_keys = set()
-            evidence_chunks = final_chunks if answer_text != NO_DOCUMENT_ANSWER else []
+            evidence_chunks = (retrieved_chunks if definition else final_chunks) if answer_text != NO_DOCUMENT_ANSWER else []
             exact_matches = [chunk for chunk in evidence_chunks if answer_text in " ".join(chunk["text"].split())]
             for chunk in exact_matches[:1] or evidence_chunks:
                 key = f"{chunk['document_id']}_{chunk.get('page_number')}_{chunk.get('section')}"

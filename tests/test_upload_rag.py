@@ -59,6 +59,25 @@ class UploadTests(unittest.TestCase):
         response = self.client.post(self.chat + "/messages", json={"question": "Who invented basketball?"})
         self.assertEqual(response.json()["sources"], [])
 
+    def test_definitions_outrank_passing_mentions(self):
+        self.upload("references.txt", b"The output is written back to HDFS for reporting. "
+                    b"Reports are copied to Sqoop. Backups go to the NameNode.")
+        doc = self.upload("definitions.txt", b"Storage concepts\n"
+                          b"Hadoop Distributed File System (HDFS) stores large files across a cluster. "
+                          b"The NameNode manages the file namespace and keeps track of block locations. "
+                          b"Sqoop performs bulk transfers between relational databases and Hadoop.").json()["documents"][0]
+        cases = {
+            "What is HDFS?": "Hadoop Distributed File System (HDFS) stores large files across a cluster.",
+            "What does HDFS stand for?": "Hadoop Distributed File System",
+            "Define Sqoop": "Sqoop performs bulk transfers between relational databases and Hadoop.",
+            "What is the NameNode?": "The NameNode manages the file namespace and keeps track of block locations.",
+        }
+        for question, expected in cases.items():
+            with self.subTest(question=question):
+                result = self.client.post(self.chat + "/messages", json={"question": question}).json()
+                self.assertEqual(result["answer"], expected)
+                self.assertEqual(result["sources"][0]["document_id"], doc["id"])
+
     def test_narrow_question_returns_only_the_matching_sentence(self):
         self.upload("mixed.txt", b"Chlorophyll absorbs light. Photosynthesis turns light into chemical energy. "
                                  b"Cellular respiration occurs in mitochondria. The nucleus contains DNA.")

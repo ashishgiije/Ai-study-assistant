@@ -4,6 +4,7 @@ from src.backend_python.vector_store import vector_store
 from src.backend_python.reranker import rerank_chunks
 from src.backend_python.gemini_service import NO_DOCUMENT_ANSWER, generate_rag_answer, get_genai_client, call_gemini_with_retry
 from src.backend_python.config import config
+from src.backend_python.document_answers import extract_requested_content
 
 def generate_general_study_answer(question: str) -> str:
     client = get_genai_client()
@@ -57,12 +58,18 @@ def process_question(chat_id: str, question: str, document_id: Optional[str] = N
 
     # Check if documents exist in this chat
     chat_docs = db_service.get_documents(chat_id)
-    indexed_docs = {doc["id"] for doc in chat_docs if doc["status"] == "indexed" and doc["chunk_count"] > 0}
+    selected_docs = [doc for doc in chat_docs if doc["status"] == "indexed" and doc["chunk_count"] > 0
+                     and (not document_id or doc["id"] == document_id)]
+    indexed_docs = {doc["id"] for doc in selected_docs}
+    extracted = extract_requested_content(question, selected_docs)
 
     if not chat_docs:
         # General conversation study mode
         answer_text = generate_general_study_answer(question)
         citations = []
+        suggested_questions = []
+    elif extracted is not None:
+        answer_text, citations = extracted
         suggested_questions = []
     else:
         # RAG mode over uploaded document chunks

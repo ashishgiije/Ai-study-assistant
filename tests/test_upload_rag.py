@@ -81,6 +81,39 @@ class UploadTests(unittest.TestCase):
         self.assertEqual(len(response.json()["sources"]), 1)
         client.assert_called_once()
 
+    def test_resume_phone_and_all_projects_have_different_answer_scopes(self):
+        response = self.upload("resume.txt", (
+            b"Sample Candidate\nPhone: +1 (202) 555-0142\n\nProjects\n"
+            b"Study Assistant\nBuilt a retrieval pipeline for lecture notes.\n"
+            b"Used Python and FastAPI to serve answers.\n\n"
+            b"Weather Tracker\nBuilt a dashboard that charts rainfall trends.\n"
+            b"Used React for the interface.\n\nEducation\nExample University"
+        ))
+        doc = response.json()["documents"][0]
+        for question, expected in (
+            ("Give me phone number", "+1 (202) 555-0142"),
+            ("Give me all projects details", "Study Assistant\n\nBuilt a retrieval pipeline for lecture notes.\n\n"
+             "Used Python and FastAPI to serve answers.\n\nWeather Tracker\n\n"
+             "Built a dashboard that charts rainfall trends.\n\nUsed React for the interface."),
+        ):
+            result = self.client.post(self.chat + "/messages", json={"question": question, "document_id": doc["id"]}).json()
+            self.assertEqual(result["answer"], expected)
+            self.assertEqual(result["sources"][0]["document_id"], doc["id"])
+
+    def test_first_two_assignment_questions_follow_pdf_order(self):
+        import pymupdf
+        with pymupdf.open() as pdf:
+            pdf.new_page().insert_text((72, 72), "Practice Assignment\n1.\nDefine photosynthesis.\n"
+                                       "2. Explain how plants use light.\nInclude one example.")
+            pdf.new_page().insert_text((72, 72), "3. Describe mitosis.")
+            result = self.upload("assignment.pdf", pdf.tobytes())
+        doc = result.json()["documents"][0]
+        result = self.client.post(self.chat + "/messages", json={
+            "question": "Give me first to question from the assignment PDF", "document_id": doc["id"],
+        }).json()
+        self.assertEqual(result["answer"], "1. Define photosynthesis.\n2. Explain how plants use light. Include one example.")
+        self.assertEqual(result["sources"][0]["page_number"], 1)
+
     def test_empty_and_corrupt_documents_report_failure(self):
         for name in ("blank.txt", "broken.pdf", "broken.docx"):
             with self.subTest(name=name):

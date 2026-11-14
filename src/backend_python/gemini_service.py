@@ -81,11 +81,12 @@ def select_answer_sentences(question: str, chunks: List[Dict[str, Any]]) -> str:
     """Rank individual evidence sentences for the local answer path."""
     query = set(search_terms(question))
     is_summary = bool(re.match(r"^(?:please\s+)?(?:summari[sz]e|give (?:me )?(?:a |an )?(?:summary|overview))\b", question.strip(), re.I))
+    wants_detail = bool(re.search(r"\b(?:details?|explain|describe|elaborate|steps|reasons|list|all|how|why)\b", question, re.I))
     candidates: Dict[str, float] = {}
     for chunk in chunks:
         for line in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])|\n\s*\n|\n(?=\s*(?:[-*•]|\d+[.)])\s)", chunk["text"]):
             sentence = " ".join(line.split())
-            if not sentence:
+            if not sentence or re.fullmatch(r"\d+\s*[.)]?", sentence):
                 continue
             terms = set(search_terms(sentence))
             matches = len(query & terms)
@@ -97,6 +98,9 @@ def select_answer_sentences(question: str, chunks: List[Dict[str, Any]]) -> str:
     ranked = sorted(candidates, key=candidates.get, reverse=True)
     if is_summary:
         return "\n".join(f"- {sentence}" for sentence in ranked[:3])
+    if wants_detail:
+        selected = set(ranked[:5])
+        return "\n\n".join(sentence for sentence in candidates if sentence in selected)
     return ranked[0]
 
 

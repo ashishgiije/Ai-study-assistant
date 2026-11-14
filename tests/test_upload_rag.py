@@ -59,6 +59,17 @@ class UploadTests(unittest.TestCase):
         response = self.client.post(self.chat + "/messages", json={"question": "Who invented basketball?"})
         self.assertEqual(response.json()["sources"], [])
 
+    def test_narrow_question_returns_only_the_matching_sentence(self):
+        self.upload("mixed.txt", b"Chlorophyll absorbs light. Photosynthesis turns light into chemical energy. "
+                                 b"Cellular respiration occurs in mitochondria. The nucleus contains DNA.")
+        response = self.client.post(self.chat + "/messages", json={"question": "What does photosynthesis do?"})
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        expected = "Photosynthesis turns light into chemical energy."
+        self.assertEqual(result["answer"], expected)
+        self.assertEqual([source["snippet"] for source in result["sources"]], [expected])
+        self.assertEqual(result["suggested_questions"], [])
+
     def test_provider_timeout_returns_cited_excerpts(self):
         self.upload("notes.txt", b"Photosynthesis turns light into chemical energy.")
         from src.backend_python import gemini_service

@@ -2,7 +2,7 @@ from typing import Dict, Any, List, Optional
 from src.backend_python.db import db_service
 from src.backend_python.vector_store import vector_store
 from src.backend_python.reranker import rerank_chunks
-from src.backend_python.gemini_service import generate_rag_answer, generate_suggested_questions, get_genai_client, call_gemini_with_retry
+from src.backend_python.gemini_service import NO_DOCUMENT_ANSWER, generate_rag_answer, get_genai_client, call_gemini_with_retry
 from src.backend_python.config import config
 
 def generate_general_study_answer(question: str) -> str:
@@ -11,7 +11,9 @@ def generate_general_study_answer(question: str) -> str:
         return "Please ensure GEMINI_API_KEY is configured in your environment to get AI responses!"
 
     prompt = question
-    system_instruction = "You are EduMind AI, a helpful, encouraging academic study assistant. Provide clear, structured, markdown-formatted study explanations."
+    system_instruction = ("You are EduMind AI, a study assistant. Answer the question directly and cover only the requested "
+                          "facts. For a narrow question, use one sentence or a short phrase. Include explanations, "
+                          "examples, or steps when requested.")
 
     try:
         from src.backend_python.gemini_service import get_valid_model_name
@@ -61,7 +63,7 @@ def process_question(chat_id: str, question: str, document_id: Optional[str] = N
         # General conversation study mode
         answer_text = generate_general_study_answer(question)
         citations = []
-        suggested_questions = generate_suggested_questions(question, answer_text)
+        suggested_questions = []
     else:
         # RAG mode over uploaded document chunks
         retrieved_chunks = vector_store.search(
@@ -83,23 +85,22 @@ def process_question(chat_id: str, question: str, document_id: Optional[str] = N
         final_chunks = rerank_result["chunks"]
 
         if not is_relevant or not final_chunks:
-            answer_text = "I couldn’t find this information in the documents uploaded to this study chat."
+            answer_text = NO_DOCUMENT_ANSWER
             citations = []
-            suggested_questions = [
-                "Can you explain what documents are uploaded?",
-                "What topics are covered in this study session?",
-                "How can I upload additional study material?"
-            ]
+            suggested_questions = []
         else:
             answer_text = generate_rag_answer(question, final_chunks)
 
             citations = []
             seen_keys = set()
-            for chunk in final_chunks:
+            evidence_chunks = final_chunks if answer_text != NO_DOCUMENT_ANSWER else []
+            exact_matches = [chunk for chunk in evidence_chunks if answer_text in " ".join(chunk["text"].split())]
+            for chunk in exact_matches[:1] or evidence_chunks:
                 key = f"{chunk['document_id']}_{chunk.get('page_number')}_{chunk.get('section')}"
                 if key not in seen_keys:
                     seen_keys.add(key)
-                    excerpt = chunk.get("text", "")[:180] + ("..." if len(chunk.get("text", "")) > 180 else "")
+                    source_text = answer_text if exact_matches else chunk["text"]
+                    excerpt = source_text[:180] + ("..." if len(source_text) > 180 else "")
                     citations.append({
                         "document_id": chunk["document_id"],
                         "document_name": chunk["document_name"],
@@ -111,7 +112,7 @@ def process_question(chat_id: str, question: str, document_id: Optional[str] = N
                         "relevance_score": round(chunk.get("score", 0.0), 3)
                     })
 
-            suggested_questions = generate_suggested_questions(question, answer_text)
+            suggested_questions = []
 
     # Save assistant response message to DB
     assistant_msg = db_service.add_message(

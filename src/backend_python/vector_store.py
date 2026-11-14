@@ -1,11 +1,14 @@
 import os
 import json
 import hashlib
+import tempfile
+import time
+from threading import RLock
 from typing import List, Dict, Any, Optional
 from src.backend_python.config import config
-from src.backend_python.embeddings import generate_embedding, cosine_similarity
+from src.backend_python.embeddings import generate_embedding, cosine_similarity, fallback_embedding, search_terms
 
-VECTOR_DB_FILE = os.path.join(os.getcwd(), "edumind_vectors.json")
+VECTOR_DB_FILE = os.path.abspath(os.getenv("VECTOR_STORE_PATH", "edumind_vectors.json"))
 
 def string_to_uuid(s: str) -> str:
     h = hashlib.sha256(s.encode("utf-8")).hexdigest()
@@ -14,28 +17,34 @@ def string_to_uuid(s: str) -> str:
 class VectorStoreService:
     def __init__(self):
         self.memory_store: List[Dict[str, Any]] = []
+        self._local_lock = RLock()
         self.load_memory_store()
         self.client = None
         self.qdrant_enabled = False
         self._qdrant_initialized = False
+        self._qdrant_retry_at = 0.0
 
     def _init_qdrant_lazy(self):
-        if self._qdrant_initialized:
+        if not config.QDRANT_URL or self._qdrant_initialized or time.monotonic() < self._qdrant_retry_at:
             return
-        self._qdrant_initialized = True
-
-        if config.QDRANT_URL:
+        with self._local_lock:
+            if self._qdrant_initialized or time.monotonic() < self._qdrant_retry_at:
+                return
             try:
                 from qdrant_client import QdrantClient
                 self.client = QdrantClient(
                     url=config.QDRANT_URL,
                     api_key=config.QDRANT_API_KEY or None,
-                    timeout=10.0
+                    timeout=3.0,
+                    check_compatibility=False,
                 )
                 self._ensure_collection()
                 self.qdrant_enabled = True
+                self._qdrant_initialized = True
                 print("[EduMind VectorStore] Connected to Qdrant Cloud.")
             except Exception as e:
+                self.client = None
+                self._qdrant_retry_at = time.monotonic() + 60
                 print(f"[EduMind VectorStore] Qdrant Client init failed ({e}), using local vector store.")
 
 
@@ -48,12 +57,17 @@ class VectorStoreService:
                 print(f"Error loading local vector file: {e}")
                 self.memory_store = []
 
-    def save_memory_store(self):
+    def save_memory_store(self, points):
+        temp_path = None
         try:
-            with open(VECTOR_DB_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.memory_store, f, indent=2)
-        except Exception as e:
-            print(f"Error saving local vector file: {e}")
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=os.path.dirname(VECTOR_DB_FILE), delete=False) as f:
+                temp_path = f.name
+                json.dump(points, f, separators=(",", ":"))
+            os.replace(temp_path, VECTOR_DB_FILE)
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+        self.memory_store = points
 
     def _ensure_collection(self):
         if not self.client:
@@ -87,13 +101,12 @@ class VectorStoreService:
             except Exception:
                 pass
         except Exception as e:
-            print(f"Qdrant collection check failed: {e}")
+            raise RuntimeError("Qdrant collection is unavailable") from e
 
     def add_chunks(self, chunks: List[Dict[str, Any]]):
         if not chunks:
             return
 
-        self._init_qdrant_lazy()
         points = []
         for chunk in chunks:
             vector = generate_embedding(chunk["enriched_text"])
@@ -101,6 +114,7 @@ class VectorStoreService:
                 "id": chunk["chunk_id"],
                 "vector": vector,
                 "payload": {
+                    "embedding_kind": "term-hash-v2" if config.USE_FALLBACK_EMBEDDINGS else config.EMBEDDING_MODEL,
                     "chat_id": chunk["chat_id"],
                     "document_id": chunk["document_id"],
                     "document_name": chunk["document_name"],
@@ -117,12 +131,13 @@ class VectorStoreService:
 
         # 1. Update local memory store
         chunk_ids = set(c["chunk_id"] for c in chunks)
-        self.memory_store = [p for p in self.memory_store if p["id"] not in chunk_ids]
-        self.memory_store.extend(points)
-        self.save_memory_store()
+        with self._local_lock:
+            self.save_memory_store([p for p in self.memory_store if p["id"] not in chunk_ids] + points)
 
         # 2. Add to Qdrant Cloud if active
-        if self.qdrant_enabled:
+        if not config.USE_FALLBACK_EMBEDDINGS:
+            self._init_qdrant_lazy()
+        if self.qdrant_enabled and not config.USE_FALLBACK_EMBEDDINGS:
             try:
                 from qdrant_client.http import models
                 qdrant_points = [
@@ -143,12 +158,13 @@ class VectorStoreService:
         if not current_chat_id:
             raise ValueError("Search failed: chat_id filter is strictly required")
 
-        self._init_qdrant_lazy()
         query_vector = generate_embedding(query)
 
 
         # Try Qdrant search if enabled
-        if self.qdrant_enabled:
+        if not config.USE_FALLBACK_EMBEDDINGS:
+            self._init_qdrant_lazy()
+        if self.qdrant_enabled and not config.USE_FALLBACK_EMBEDDINGS:
             try:
                 from qdrant_client.http import models
                 must_conditions = [models.FieldCondition(key="chat_id", match=models.MatchValue(value=current_chat_id))]
@@ -157,7 +173,7 @@ class VectorStoreService:
                 
                 qdrant_res = self.client.query_points(
                     collection_name=config.QDRANT_COLLECTION,
-                    vector=query_vector,
+                    query=query_vector,
                     query_filter=models.Filter(must=must_conditions),
                     limit=top_k
                 ).points
@@ -192,8 +208,16 @@ class VectorStoreService:
 
         # Compute cosine similarity for each candidate
         scored_points = []
+        query_terms = set(search_terms(query))
         for p in isolated_points:
-            similarity = cosine_similarity(query_vector, p["vector"])
+            payload = p["payload"]
+            vector = p["vector"]
+            if config.USE_FALLBACK_EMBEDDINGS and payload.get("embedding_kind") != "term-hash-v2":
+                vector = fallback_embedding(payload["enriched_text"])
+            similarity = cosine_similarity(query_vector, vector)
+            if config.USE_FALLBACK_EMBEDDINGS and query_terms:
+                coverage = len(query_terms & set(search_terms(payload["text"]))) / len(query_terms)
+                similarity = max(0, similarity) * 0.4 + coverage * 0.6
             scored_points.append({"point": p, "score": similarity})
 
         # Use nlargest for efficient top‑k selection
@@ -220,12 +244,13 @@ class VectorStoreService:
         return top_results
 
     def delete_document_vectors(self, chat_id: str, document_id: str):
-        self._init_qdrant_lazy()
-        self.memory_store = [
-            p for p in self.memory_store
-            if not (p["payload"].get("chat_id") == chat_id and p["payload"].get("document_id") == document_id)
-        ]
-        self.save_memory_store()
+        if not config.USE_FALLBACK_EMBEDDINGS:
+            self._init_qdrant_lazy()
+        with self._local_lock:
+            self.save_memory_store([
+                p for p in self.memory_store
+                if not (p["payload"].get("chat_id") == chat_id and p["payload"].get("document_id") == document_id)
+            ])
 
         if self.client:
             try:
@@ -245,12 +270,13 @@ class VectorStoreService:
                 print(f"Qdrant delete document vectors error: {e}")
 
     def delete_chat_vectors(self, chat_id: str):
-        self._init_qdrant_lazy()
-        self.memory_store = [
-            p for p in self.memory_store
-            if p["payload"].get("chat_id") != chat_id
-        ]
-        self.save_memory_store()
+        if not config.USE_FALLBACK_EMBEDDINGS:
+            self._init_qdrant_lazy()
+        with self._local_lock:
+            self.save_memory_store([
+                p for p in self.memory_store
+                if p["payload"].get("chat_id") != chat_id
+            ])
 
 
         if self.client:

@@ -13,24 +13,14 @@ def clean_text(text: str) -> str:
 def extract_pdf_pages(file_path: str) -> List[Dict[str, Any]]:
     pages = []
     try:
-        import fitz  # PyMuPDF
-        doc = fitz.open(file_path)
-        for page_num, page in enumerate(doc, start=1):
-            text = clean_text(page.get_text())
-            if text:
-                pages.append({
-                    "page_number": page_num,
-                    "text": text
-                })
-        doc.close()
+        import pymupdf
+        with pymupdf.open(file_path) as doc:
+            for page_num, page in enumerate(doc, start=1):
+                text = clean_text(page.get_text())
+                if text:
+                    pages.append({"page_number": page_num, "text": text})
     except Exception as e:
-        print(f"Error reading PDF with PyMuPDF: {e}")
-        # Fallback reading as plain text if fitz fails
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            raw = f.read()
-            cleaned = clean_text(raw)
-            if cleaned:
-                pages.append({"page_number": 1, "text": cleaned})
+        raise ValueError("Could not read this PDF. Check that it opens and is not password protected.") from e
     return pages
 
 def extract_docx_sections(file_path: str) -> List[Dict[str, Any]]:
@@ -47,7 +37,7 @@ def extract_docx_sections(file_path: str) -> List[Dict[str, Any]]:
                 continue
 
             # Identify title/heading candidate
-            if len(trimmed) < 80 and not trimmed.endswith(".") and not trimmed.endswith(":"):
+            if p.style and p.style.name.startswith(("Heading", "Title")):
                 if current_text_lines:
                     full_text = clean_text("\n\n".join(current_text_lines))
                     if full_text:
@@ -68,12 +58,7 @@ def extract_docx_sections(file_path: str) -> List[Dict[str, Any]]:
                     "text": full_text
                 })
     except Exception as e:
-        print(f"Error reading DOCX: {e}")
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            raw = f.read()
-            cleaned = clean_text(raw)
-            if cleaned:
-                pages.append({"section": "General", "text": cleaned})
+        raise ValueError("Could not read this DOCX. Save it as a new DOCX file and retry.") from e
 
     return pages
 

@@ -1,5 +1,7 @@
 import os
 import math
+import re
+from hashlib import blake2b
 from typing import List
 
 # Limit thread counts to conserve memory on constrained platforms (e.g., Render/Koyeb free tiers)
@@ -19,7 +21,7 @@ def get_sentence_transformer():
         # If USE_FALLBACK_EMBEDDINGS=true, skip model download entirely
         # This is necessary on Render/Koyeb free tier (512MB RAM) to prevent OOM crash
         if config.USE_FALLBACK_EMBEDDINGS:
-            print("[EduMind] USE_FALLBACK_EMBEDDINGS=true — using built-in hash embeddings (no model download).")
+            print("[EduMind] Using built-in term-hash embeddings.")
             _st_model = "fallback"
             return _st_model
         try:
@@ -35,16 +37,17 @@ def get_sentence_transformer():
     return _st_model
 
 
-def fallback_embedding(text: str, dim: int = 384) -> List[float]:
-    """Generates a normalized 384-dim embedding from text hash features."""
-    vec = [0.0] * dim
-    clean = text.lower().strip()
-    words = clean.split()
+def search_terms(text: str) -> List[str]:
+    stop_words = {"a", "an", "and", "are", "can", "do", "does", "for", "how", "in", "is", "of", "on", "the", "to", "what", "when", "where", "which", "who", "why", "with", "you"}
+    return [word for word in re.findall(r"[^\W_]+", text.casefold()) if word not in stop_words]
 
-    for idx, word in enumerate(words):
-        for char_idx, char in enumerate(word):
-            h = (ord(char) * 31 + idx * 17 + char_idx * 7) % dim
-            vec[h] += 1.0 / (char_idx + 1)
+
+def fallback_embedding(text: str, dim: int = 384) -> List[float]:
+    """Vectorize whole terms using deterministic signed feature hashing."""
+    vec = [0.0] * dim
+    for word in search_terms(text):
+        digest = blake2b(word.encode("utf-8"), digest_size=8).digest()
+        vec[int.from_bytes(digest, "little") % dim] += 1 if digest[0] & 1 else -1
 
     norm = math.sqrt(sum(v * v for v in vec))
     if norm > 0:

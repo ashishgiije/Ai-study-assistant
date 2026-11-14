@@ -10,4 +10,5 @@ uploads/*
 !uploads/.gitkeep
 edumind.db
 edumind_db.sqlite
+edumind_db.json
 edumind_vectors.json

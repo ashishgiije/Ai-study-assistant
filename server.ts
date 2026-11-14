@@ -1,15 +1,12 @@
 import express from 'express';
 import path from 'path';
 import { spawn } from 'child_process';
-import { createServer as createViteServer } from 'vite';
-import dotenv from 'dotenv';
+import 'dotenv/config';
 import http from 'http';
 import { apiRouter } from './src/server/backend';
 
-dotenv.config();
-
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT || 3000);
 const PYTHON_PORT = process.env.PYTHON_PORT || 8001;
 
 let pythonProcess: ReturnType<typeof spawn> | null = null;
@@ -47,9 +44,12 @@ function startPythonBackend() {
 }
 
 function waitForPythonBackend(maxAttempts = 60, intervalMs = 2000) {
+  const child = pythonProcess;
   let attempts = 0;
   const check = () => {
+    if (!child || pythonProcess !== child || child.exitCode !== null || child.signalCode !== null) return;
     const req = http.get(`http://127.0.0.1:${PYTHON_PORT}/health`, (res) => {
+      res.resume();
       if (res.statusCode === 200) {
         pythonReady = true;
         console.log('[EduMind Server] ✅ Python FastAPI backend is ready and healthy!');
@@ -58,7 +58,7 @@ function waitForPythonBackend(maxAttempts = 60, intervalMs = 2000) {
       }
     });
     req.on('error', retry);
-    req.setTimeout(2000, () => { req.destroy(); retry(); });
+    req.setTimeout(2000, () => req.destroy(new Error('Python health probe timed out')));
   };
 
   const retry = () => {
@@ -98,8 +98,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
+  res.status(pythonReady ? 200 : 503).json({
+    status: pythonReady ? 'ok' : 'starting',
     pythonBackendReady: pythonReady,
     service: 'EduMind AI Express & Python FastAPI RAG Backend'
   });
@@ -107,6 +107,7 @@ app.get('/health', (req, res) => {
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,

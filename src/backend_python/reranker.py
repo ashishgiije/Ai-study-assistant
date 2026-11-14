@@ -1,5 +1,6 @@
-import re
 from typing import List, Dict, Any
+from src.backend_python.config import config
+from src.backend_python.embeddings import search_terms
 
 _cross_encoder_model = None
 
@@ -25,19 +26,13 @@ def rerank_chunks(
     # Fast path: if number of chunks is small, skip loading the heavy cross-encoder model
     if not chunks:
         return {"is_relevant": False, "chunks": [], "max_score": 0.0}
-    if len(chunks) <= top_n:
+    if len(chunks) <= top_n and not config.USE_FALLBACK_EMBEDDINGS:
         # Compute max score from existing chunk scores (if any) and decide relevance
         max_score = max((c.get("score", 0.0) for c in chunks), default=0.0)
         is_relevant = max_score >= min_relevance_score
         return {"is_relevant": is_relevant, "chunks": chunks if is_relevant else [], "max_score": max_score}
     
-    # Existing logic continues below
-    model = get_cross_encoder()
-
-    if not chunks:
-        return {"is_relevant": False, "chunks": [], "max_score": 0.0}
-
-    model = get_cross_encoder()
+    model = "fallback" if config.USE_FALLBACK_EMBEDDINGS else get_cross_encoder()
 
     if model != "fallback" and model is not None:
         try:
@@ -66,16 +61,17 @@ def rerank_chunks(
             print(f"CrossEncoder scoring error ({e}), falling back to hybrid reranker.")
 
     # Fallback Hybrid Keyword + Vector Reranker
-    query_terms = [t for t in re.findall(r"\w+", query.lower()) if len(t) > 2]
+    query_terms = set(search_terms(query))
     reranked = []
 
     for chunk in chunks:
         base_score = float(chunk.get("score", 0.0))
-        text_lower = (chunk.get("text", "") + " " + (chunk.get("section") or "")).lower()
-
-        matched_terms = sum(1 for term in query_terms if term in text_lower)
+        chunk_terms = set(search_terms(chunk.get("text", "") + " " + (chunk.get("section") or "")))
+        matched_terms = len(query_terms & chunk_terms)
         coverage_ratio = (matched_terms / len(query_terms)) if query_terms else 0.0
 
+        if config.USE_FALLBACK_EMBEDDINGS and not matched_terms:
+            continue
         final_score = base_score * 0.6 + coverage_ratio * 0.4
         chunk_copy = dict(chunk)
         chunk_copy["score"] = final_score

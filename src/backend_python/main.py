@@ -2,7 +2,8 @@ import os
 import shutil
 import uuid
 import time
-import random
+import logging
+from pathlib import Path
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File, Body, Header, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +17,7 @@ from src.backend_python.vector_store import vector_store
 from src.backend_python.rag_pipeline import process_question
 
 app = FastAPI(title="EduMind AI FastAPI Backend", version="1.0.0")
+logger = logging.getLogger(__name__)
 
 # CORS Middleware
 app.add_middleware(
@@ -25,11 +27,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("startup")
-def on_startup():
-    print(f"[EduMind Python Backend] ✅ FastAPI server started and ready on port {config.PORT}")
-    print("[EduMind Python Backend] Embedding and vector models will be lazy-loaded on demand.")
 
 # Ensure root upload directory
 upload_root_dir = os.path.abspath(config.UPLOAD_DIRECTORY)
@@ -173,7 +170,7 @@ def get_documents(chat_id: str):
         return []
 
 @app.post("/api/chats/{chat_id}/documents", status_code=status.HTTP_201_CREATED)
-async def upload_documents(
+def upload_documents(
     chat_id: str,
     files: List[UploadFile] = File(...),
     x_user_id: Optional[str] = Header(None, alias="x-user-id"),
@@ -183,33 +180,29 @@ async def upload_documents(
     user_id = extract_user_id(x_user_id, authorization)
     chat = db_service.get_chat(chat_id, user_id=user_id)
     if not chat:
-        # Auto-create chat session if uploading to a new chat
-        chat = db_service.create_chat(chat_id=chat_id, title="New Study Session", user_id=user_id)
+        raise HTTPException(status_code=404, detail="Chat not found")
 
-    if not files:
-        raise HTTPException(status_code=400, detail="No files uploaded")
+    file_types = [Path(file.filename or "").suffix.lower().lstrip(".") for file in files]
+    if not files or any(ext not in {"pdf", "docx", "txt"} for ext in file_types):
+        raise HTTPException(status_code=415, detail="Choose PDF, DOCX, or TXT files.")
+    limit = config.MAX_FILE_SIZE_MB * 1024 * 1024
+    if any(file.size is None or file.size > limit for file in files):
+        raise HTTPException(status_code=413, detail=f"Each file must be at most {config.MAX_FILE_SIZE_MB} MB.")
 
-
-    chat_upload_dir = os.path.join(upload_root_dir, chat_id)
-    os.makedirs(chat_upload_dir, exist_ok=True)
+    upload_root = Path(upload_root_dir).resolve()
+    chat_upload_dir = (upload_root / chat_id).resolve()
+    if chat_upload_dir.parent != upload_root:
+        raise HTTPException(status_code=400, detail="Invalid chat ID")
+    chat_upload_dir.mkdir(exist_ok=True)
 
     uploaded_documents = []
 
-    for file in files:
-        file_ext = os.path.splitext(file.filename)[1].lower().replace(".", "")
-        if file_ext not in ["pdf", "docx", "txt"]:
-            continue
-
+    for file, file_ext in zip(files, file_types):
         doc_id = f"doc_{uuid.uuid4().hex[:9]}_{int(time.time() * 1000)}"
-        filename_prefix = f"{int(uuid.uuid4().int % 1000000)}-{file.filename}"
-        saved_file_path = os.path.join(chat_upload_dir, filename_prefix)
+        saved_file_path = str(chat_upload_dir / f"{doc_id}.{file_ext}")
 
-        # Save file content to disk
-        contents = await file.read()
         with open(saved_file_path, "wb") as f:
-            f.write(contents)
-
-        file_size = len(contents)
+            shutil.copyfileobj(file.file, f, length=1024 * 1024)
 
         doc_record = db_service.add_document(
             doc_id=doc_id,
@@ -217,7 +210,7 @@ async def upload_documents(
             file_name=file.filename,
             file_type=file_ext,
             file_path=saved_file_path,
-            file_size=file_size,
+            file_size=file.size,
         )
 
         db_service.update_document_status(doc_id, "processing")
@@ -231,23 +224,29 @@ async def upload_documents(
                 file_type=file_ext,
             )
             chunks = chunk_document(processed_doc)
+            if not chunks:
+                raise ValueError("No readable text found. For scanned PDFs, upload an OCR-processed copy.")
             vector_store.add_chunks(chunks)
             updated_doc = db_service.update_document_status(doc_id, "indexed", len(chunks))
             if updated_doc:
                 uploaded_documents.append(updated_doc)
         except Exception as proc_err:
-            print(f"Error processing document {file.filename}: {proc_err}")
+            if isinstance(proc_err, ValueError):
+                logger.info("Document %s could not be indexed: %s", doc_id, proc_err)
+            else:
+                logger.exception("Indexing failed for %s", doc_id)
             failed_doc = db_service.update_document_status(
                 doc_id,
                 "failed",
                 0,
-                str(proc_err) or "Processing error",
+                str(proc_err) if isinstance(proc_err, ValueError) else "Indexing failed. Remove this file and retry.",
             )
             if failed_doc:
                 uploaded_documents.append(failed_doc)
 
+    indexed_count = sum(doc["status"] == "indexed" for doc in uploaded_documents)
     return {
-        "message": f"{len(uploaded_documents)} document(s) uploaded and processed successfully",
+        "message": f"{indexed_count} of {len(uploaded_documents)} document(s) indexed.",
         "documents": uploaded_documents,
     }
 

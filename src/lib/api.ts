@@ -130,6 +130,12 @@ export const api = {
       method: 'POST',
       headers: getHeaders(),
       body: formData,
+      signal: AbortSignal.timeout(120_000),
+    }).catch(error => {
+      if (error instanceof DOMException && error.name === 'TimeoutError') {
+        throw new Error('Indexing took too long. Check the document list before trying again.');
+      }
+      throw error;
     });
 
     if (!res.ok) {

@@ -55,6 +55,7 @@ def process_question(chat_id: str, question: str, document_id: Optional[str] = N
 
     # Check if documents exist in this chat
     chat_docs = db_service.get_documents(chat_id)
+    indexed_docs = {doc["id"] for doc in chat_docs if doc["status"] == "indexed" and doc["chunk_count"] > 0}
 
     if not chat_docs:
         # General conversation study mode
@@ -68,7 +69,8 @@ def process_question(chat_id: str, question: str, document_id: Optional[str] = N
             query=question,
             document_id=document_id,
             top_k=config.RETRIEVAL_TOP_K  # Top 10
-        )
+        ) if indexed_docs and (not document_id or document_id in indexed_docs) else []
+        retrieved_chunks = [chunk for chunk in retrieved_chunks if chunk["document_id"] in indexed_docs]
 
         rerank_result = rerank_chunks(
             query=question,

@@ -99,7 +99,9 @@ NODE_ENV=production npm start
 
 `lint` runs TypeScript checking, not a formatter. Production requires both runtimes, private credentials, persistent storage, and the authorization fixes described in the audit.
 
-For a lightweight development path, `USE_FALLBACK_EMBEDDINGS=true` selects the implemented deterministic hash embeddings. This reduces model requirements but does not validate learned semantic retrieval. The Python default database/upload paths are under `/tmp`; configure durable paths when persistence matters.
+The Docker image defaults to lightweight term-hash vectors and lexical reranking. In this mode the app uses the local vector store and skips Qdrant and model downloads. For learned embeddings and optional Qdrant, install `requirements-models.txt` on a host sized for the models and set `USE_FALLBACK_EMBEDDINGS=false`. Set `VECTOR_STORE_PATH` along with durable database and upload paths when persistence matters. Storage in the free Render container is ephemeral.
+
+Run the Python upload and retrieval tests with `python -m unittest discover -s tests -v` after installing `httpx` in the test environment.
 
 ## Project structure
 

@@ -1,8 +1,9 @@
 import React, { useRef, useState } from 'react';
+import type { Document } from '../../types';
 import { UploadCloud, Loader2, AlertCircle } from 'lucide-react';
 
 interface DocumentUploaderProps {
-  onUpload: (files: File[]) => Promise<any>;
+  onUpload: (files: File[]) => Promise<{ documents: Document[] } | undefined>;
   uploading: boolean;
 }
 
@@ -12,6 +13,7 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({ onUpload, up
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const handleFiles = async (filesList: FileList | File[]) => {
+    if (uploading) return;
     setErrorMsg(null);
     const validFiles: File[] = [];
     const maxMb = 20;
@@ -32,7 +34,11 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({ onUpload, up
 
     if (validFiles.length > 0) {
       try {
-        await onUpload(validFiles);
+        const result = await onUpload(validFiles);
+        const failures = result?.documents.filter(doc => doc.status === 'failed') ?? [];
+        if (failures.length) {
+          setErrorMsg(failures.map(doc => `${doc.file_name}: ${doc.error_message || 'Indexing failed'}`).join(' '));
+        }
       } catch (err: any) {
         setErrorMsg(err.message || 'Upload failed');
       }
@@ -64,8 +70,11 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({ onUpload, up
         multiple
         accept=".pdf,.docx,.txt"
         className="hidden"
-        onChange={e => {
-          if (e.target.files) handleFiles(e.target.files);
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+          const input: HTMLInputElement = e.currentTarget;
+          const files = input.files ? Array.from(input.files) : [];
+          input.value = '';
+          if (files.length) void handleFiles(files);
         }}
       />
 
@@ -73,7 +82,7 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({ onUpload, up
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        onClick={() => fileInputRef.current?.click()}
+        onClick={() => { if (!uploading) fileInputRef.current?.click(); }}
         className={`p-3.5 border border-dashed flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
           isDragOver
             ? 'border-[#FEF08A] bg-[#FEF08A]/10'
@@ -83,7 +92,7 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({ onUpload, up
         {uploading ? (
           <div className="flex items-center gap-2 text-xs font-mono uppercase font-bold text-[#FEF08A]">
             <Loader2 className="w-4 h-4 animate-spin" />
-            <span>Parsing Vectors...</span>
+            <span>Uploading and indexing…</span>
           </div>
         ) : (
           <>
@@ -101,7 +110,7 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({ onUpload, up
       {errorMsg && (
         <div className="flex items-center gap-1.5 p-2 bg-red-500/10 border border-red-500/30 text-xs text-red-400 font-mono">
           <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-400" />
-          <span className="truncate">{errorMsg}</span>
+          <span>{errorMsg}</span>
         </div>
       )}
     </div>

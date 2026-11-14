@@ -10,8 +10,8 @@ def chunk_document(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     file_type = doc["file_type"]
     pages = doc.get("pages", [])
 
-    chunk_size = config.CHUNK_SIZE  # 900
-    chunk_overlap = config.CHUNK_OVERLAP  # 150
+    chunk_size = max(1, config.CHUNK_SIZE)
+    chunk_overlap = min(max(0, config.CHUNK_OVERLAP), chunk_size - 1)
     global_chunk_index = 0
 
     for page_idx, page in enumerate(pages):
@@ -27,30 +27,22 @@ def chunk_document(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
         if not paragraphs:
             paragraphs = [text]
 
-        current_chunk = ""
         page_chunks: List[str] = []
-
-        for p in paragraphs:
-            if not current_chunk:
-                current_chunk = p
-            elif len(current_chunk) + len(p) + 2 <= chunk_size:
-                current_chunk += "\n\n" + p
-            else:
-                page_chunks.append(current_chunk)
-
-                # Maintain overlap from end of current_chunk
-                if len(current_chunk) > chunk_overlap:
-                    overlap_text = current_chunk[-chunk_overlap:]
-                    # Try to break on space
-                    space_idx = overlap_text.find(" ")
-                    if space_idx != -1:
-                        overlap_text = overlap_text[space_idx + 1:]
-                    current_chunk = overlap_text + "\n\n" + p
-                else:
-                    current_chunk = p
-
-        if current_chunk.strip():
-            page_chunks.append(current_chunk.strip())
+        text = "\n\n".join(paragraphs)
+        start = 0
+        while start < len(text):
+            end = min(start + chunk_size, len(text))
+            if end < len(text):
+                earliest_break = start + max(chunk_overlap + 1, chunk_size // 2)
+                paragraph_break = text.rfind("\n\n", earliest_break, end)
+                word_break = text.rfind(" ", earliest_break, end)
+                end = paragraph_break if paragraph_break >= 0 else word_break if word_break >= 0 else end
+            piece = text[start:end].strip()
+            if piece:
+                page_chunks.append(piece)
+            if end == len(text):
+                break
+            start = max(start + 1, end - chunk_overlap)
 
         for c_text in page_chunks:
             # Build context header for enriched text

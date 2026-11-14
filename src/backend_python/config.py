@@ -19,7 +19,7 @@ class Config:
     RETRIEVAL_TOP_K: int = int(os.getenv("RETRIEVAL_TOP_K", "10"))
     RERANK_TOP_N: int = int(os.getenv("RERANK_TOP_N", "5"))
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.2"))
-    MAX_FILE_SIZE_MB: int = int(os.getenv("MAX_FILE_SIZE_MB", "25"))
+    MAX_FILE_SIZE_MB: int = int(os.getenv("MAX_FILE_SIZE_MB", "20"))
     # Use /tmp for writable paths on cloud platforms (Render, Fly, Koyeb)
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:////tmp/edumind_db.sqlite")
     UPLOAD_DIRECTORY: str = os.getenv("UPLOAD_DIRECTORY", "/tmp/uploads")

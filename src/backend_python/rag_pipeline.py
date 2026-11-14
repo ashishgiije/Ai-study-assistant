@@ -98,6 +98,8 @@ def process_question(chat_id: str, question: str, document_id: Optional[str] = N
         )
 
         final_chunks = list({chunk["chunk_id"]: chunk for chunk in topic_chunks + rerank_result["chunks"]}.values())
+        if not final_chunks:
+            final_chunks = [chunk for chunk in retrieved_chunks if chunk.get("dense_score", 0.0) >= 0.60][:config.RERANK_TOP_N]
         definition = find_definition(question, retrieved_chunks) if not topics else None
         if definition:
             evidence_chunks = [

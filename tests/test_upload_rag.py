@@ -60,6 +60,20 @@ class UploadTests(unittest.TestCase):
         response = self.client.post(self.chat + "/messages", json={"question": "Who invented basketball?"})
         self.assertEqual(response.json()["sources"], [])
 
+    def test_semantic_fallback_answers_without_shared_words(self):
+        from src.backend_python.gemini_service import generate_rag_answer, NO_DOCUMENT_ANSWER
+        chunk = {"text": "The Moon orbits Earth. Freshwater freezes at zero degrees Celsius.",
+                 "semantic_score": 0.91, "document_name": "science.txt"}
+        with patch("src.backend_python.gemini_service.get_genai_client", return_value=None):
+            with patch("src.backend_python.reranker.config.USE_FALLBACK_EMBEDDINGS", False):
+                with patch("src.backend_python.reranker.get_cross_encoder") as model:
+                    model.return_value.rerank.return_value = [-5, 4]
+                    answer, sources = generate_rag_answer("When does water become solid?", [chunk])
+                    self.assertEqual(answer, "Freshwater freezes at zero degrees Celsius.")
+                    self.assertEqual(sources[0]["citation_text"], answer)
+                    model.return_value.rerank.return_value = [-5, -5]
+                    self.assertEqual(generate_rag_answer("Who invented basketball?", [chunk]), (NO_DOCUMENT_ANSWER, []))
+
     def test_comparison_uses_sources_from_both_documents(self):
         tree = self.upload("tree.txt", b"A decision tree uses a single tree to split data.").json()["documents"][0]
         forest = self.upload("forest.txt", b"A random forest uses an ensemble of decision trees.").json()["documents"][0]

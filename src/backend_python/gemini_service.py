@@ -4,7 +4,8 @@ import re
 import time
 from typing import List, Dict, Any
 from src.backend_python.config import config
-from src.backend_python.embeddings import search_terms
+from src.backend_python.embeddings import cosine_similarity, generate_embeddings, search_terms
+from src.backend_python.reranker import rerank_chunks
 
 _genai_client = None
 
@@ -121,15 +122,43 @@ def select_answer_sentences(question: str, chunks: List[Dict[str, Any]]) -> str:
     is_summary = bool(re.match(r"^(?:please\s+)?(?:summari[sz]e|give (?:me )?(?:a |an )?(?:summary|overview))\b", question.strip(), re.I))
     wants_detail = bool(re.search(r"\b(?:details?|explain|describe|elaborate|steps|reasons|list|all|how|why)\b", question, re.I))
     candidates: Dict[str, float] = {}
+    passages: Dict[str, Dict[str, Any]] = {}
     for chunk in chunks:
         for line in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])|\n\s*\n|\n(?=\s*(?:[-*•]|\d+[.)])\s)", chunk["text"]):
             sentence = " ".join(line.split())
             if not sentence or re.fullmatch(r"\d+\s*[.)]?", sentence):
                 continue
+            passages.setdefault(sentence, {"text": sentence, "enriched_text": sentence})
             terms = set(search_terms(sentence))
             matches = len(query & terms)
             if matches or is_summary:
                 candidates.setdefault(sentence, matches / max(1, len(terms)) ** 0.5)
+
+    has_dense_evidence = any("dense_score" in chunk for chunk in chunks)
+    if passages and not is_summary and any("semantic_score" in chunk for chunk in chunks):
+        ranked_passages = rerank_chunks(
+            question, list(passages.values())[:60], top_n=5 if wants_detail else 1,
+            min_relevance_score=0.5,
+        )["chunks"]
+        supported = [passage["text"] for passage in ranked_passages if "semantic_score" in passage]
+        if supported:
+            return "\n\n".join(supported)
+
+    if passages and has_dense_evidence and not is_summary:
+        sentences = list(passages)[:60]
+        model, vectors = generate_embeddings(sentences)
+        query_model, (query_vector,) = generate_embeddings([question], query=True)
+        if model == query_model and model != "term-hash-v2":
+            ranked_semantic = sorted(
+                ((cosine_similarity(query_vector, vector), sentence) for sentence, vector in zip(sentences, vectors)),
+                reverse=True,
+            )
+            best_score, best_sentence = ranked_semantic[0]
+            runner_up = ranked_semantic[1][0] if len(ranked_semantic) > 1 else 0.0
+            if best_score >= 0.62 and (best_score >= 0.70 or best_score - runner_up >= 0.05):
+                return best_sentence
+        if not any("semantic_score" in chunk for chunk in chunks):
+            return NO_DOCUMENT_ANSWER
 
     if not candidates:
         return NO_DOCUMENT_ANSWER

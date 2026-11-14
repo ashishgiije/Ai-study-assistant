@@ -200,7 +200,8 @@ class VectorStoreService:
                             "chunk_index": res.payload["chunk_index"],
                             "text": res.payload["text"],
                             "enriched_text": res.payload["enriched_text"],
-                            "score": res.score
+                            "score": res.score,
+                            "dense_score": res.score,
                         }
                         for res in qdrant_res
                     ]
@@ -253,6 +254,8 @@ class VectorStoreService:
                 "text": payload["text"],
                 "enriched_text": payload["enriched_text"],
                 "score": sp["score"],
+                **({"dense_score": sp["score"]} if embedding_kind != "term-hash-v2"
+                   and payload.get("embedding_kind") == embedding_kind else {}),
             })
 
         return top_results

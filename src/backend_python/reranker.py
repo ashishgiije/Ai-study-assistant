@@ -37,6 +37,7 @@ def rerank_chunks(
                 norm_score = float(1.0 / (1.0 + pow(2.71828, -float(score))))
                 chunk_copy = dict(chunk)
                 chunk_copy["score"] = norm_score
+                chunk_copy["semantic_score"] = norm_score
                 reranked.append(chunk_copy)
 
             reranked.sort(key=lambda x: x["score"], reverse=True)

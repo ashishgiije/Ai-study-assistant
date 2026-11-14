@@ -20,6 +20,11 @@ COPY requirements.txt requirements-models.txt ./
 RUN npm install
 RUN pip install --no-cache-dir -r requirements-models.txt
 
+# Cache the quantized models at build time so a first upload never downloads them.
+ENV FASTEMBED_CACHE_PATH=/opt/fastembed-cache
+RUN python -c "from fastembed import TextEmbedding; from fastembed.rerank.cross_encoder import TextCrossEncoder; TextEmbedding('BAAI/bge-small-en-v1.5', threads=1, lazy_load=True); TextCrossEncoder('Xenova/ms-marco-MiniLM-L-6-v2', threads=1, lazy_load=True)"
+ENV HF_HUB_OFFLINE=1
+
 # Copy source code
 COPY . .
 

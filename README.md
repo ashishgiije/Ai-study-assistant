@@ -99,7 +99,9 @@ NODE_ENV=production npm start
 
 `lint` runs TypeScript checking, not a formatter. Production requires both runtimes, private credentials, persistent storage, and the authorization fixes described in the audit.
 
-The Docker image defaults to lightweight term-hash vectors and lexical reranking. In this mode the app uses the local vector store and skips Qdrant and model downloads. For learned embeddings and optional Qdrant, install `requirements-models.txt` on a host sized for the models and set `USE_FALLBACK_EMBEDDINGS=false`. Set `VECTOR_STORE_PATH` along with durable database and upload paths when persistence matters. Storage in the free Render container is ephemeral.
+The Docker image includes the FastEmbed CPU runtime and defaults to lightweight term-hash vectors and lexical reranking. On a host sized for the models, set `USE_FALLBACK_EMBEDDINGS=false` to use BAAI/bge-small-en-v1.5 and the MiniLM cross-encoder through ONNX. Configure `QDRANT_URL` and `QDRANT_API_KEY` for remote semantic search. New uploads use the configured embedding model. Re-upload older files to populate their semantic vectors. Set `VECTOR_STORE_PATH` along with durable database and upload paths when persistence matters. Storage in the free Render container is ephemeral.
+
+Comparison questions retrieve passages for both topics. Gemini receives the combined evidence and returns references to the passages it used. The local answer path cites the text it actually quotes.
 
 Run the Python upload and retrieval tests with `python -m unittest discover -s tests -v` after installing `httpx` in the test environment.
 

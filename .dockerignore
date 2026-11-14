@@ -1,4 +1,5 @@
 node_modules
+.model-test-deps
 dist
 __pycache__
 *.pyc

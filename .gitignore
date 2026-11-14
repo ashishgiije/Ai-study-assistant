@@ -1,4 +1,5 @@
 node_modules/
+.model-test-deps/
 build/
 dist/
 coverage/

@@ -15,7 +15,7 @@ from src.backend_python.config import config
 
 _st_model = None
 
-def get_sentence_transformer():
+def get_embedding_model():
     global _st_model
     if _st_model is None:
         # If USE_FALLBACK_EMBEDDINGS=true, skip model download entirely
@@ -25,11 +25,9 @@ def get_sentence_transformer():
             _st_model = "fallback"
             return _st_model
         try:
-            import torch
-            torch.set_num_threads(1)
-            from sentence_transformers import SentenceTransformer
+            from fastembed import TextEmbedding
             print(f"Loading embedding model: {config.EMBEDDING_MODEL}...")
-            _st_model = SentenceTransformer(config.EMBEDDING_MODEL)
+            _st_model = TextEmbedding(model_name=config.EMBEDDING_MODEL, threads=1)
             print("Embedding model loaded successfully.")
         except Exception as e:
             print(f"Warning: Could not load SentenceTransformer ({e}). Using deterministic fallback embeddings.")
@@ -54,16 +52,16 @@ def fallback_embedding(text: str, dim: int = 384) -> List[float]:
         vec = [v / norm for v in vec]
     return vec
 
-def generate_embedding(text: str) -> List[float]:
-    model = get_sentence_transformer()
+def generate_embeddings(texts: List[str], query: bool = False) -> tuple[str, List[List[float]]]:
+    model = get_embedding_model()
     if model != "fallback" and model is not None:
         try:
-            emb = model.encode(text, normalize_embeddings=True)
-            return emb.tolist()
+            vectors = model.query_embed(texts) if query else model.embed(texts, batch_size=8)
+            return config.EMBEDDING_MODEL, [vector.tolist() for vector in vectors]
         except Exception as e:
             print(f"Error encoding with SentenceTransformer: {e}")
 
-    return fallback_embedding(text)
+    return "term-hash-v2", [fallback_embedding(text) for text in texts]
 
 def cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
     if not vec_a or not vec_b or len(vec_a) != len(vec_b):

@@ -14,11 +14,11 @@ WORKDIR /app
 
 # Copy dependency definition files
 COPY package*.json ./
-COPY requirements.txt ./
+COPY requirements.txt requirements-models.txt ./
 
 # Install Node and Python dependencies
 RUN npm install
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-models.txt
 
 # Copy source code
 COPY . .

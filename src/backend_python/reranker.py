@@ -8,9 +8,9 @@ def get_cross_encoder():
     global _cross_encoder_model
     if _cross_encoder_model is None:
         try:
-            from sentence_transformers import CrossEncoder
+            from fastembed.rerank.cross_encoder import TextCrossEncoder
             print("Loading cross-encoder reranker model: cross-encoder/ms-marco-MiniLM-L-6-v2...")
-            _cross_encoder_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+            _cross_encoder_model = TextCrossEncoder("Xenova/ms-marco-MiniLM-L-6-v2", threads=1)
             print("Cross-encoder model loaded successfully.")
         except Exception as e:
             print(f"Warning: Could not load CrossEncoder model ({e}). Using hybrid keyword+vector reranker.")
@@ -23,21 +23,13 @@ def rerank_chunks(
     top_n: int = 5,
     min_relevance_score: float = 0.12
 ) -> Dict[str, Any]:
-    # Fast path: if number of chunks is small, skip loading the heavy cross-encoder model
     if not chunks:
         return {"is_relevant": False, "chunks": [], "max_score": 0.0}
-    if len(chunks) <= top_n and not config.USE_FALLBACK_EMBEDDINGS:
-        # Compute max score from existing chunk scores (if any) and decide relevance
-        max_score = max((c.get("score", 0.0) for c in chunks), default=0.0)
-        is_relevant = max_score >= min_relevance_score
-        return {"is_relevant": is_relevant, "chunks": chunks if is_relevant else [], "max_score": max_score}
-    
     model = "fallback" if config.USE_FALLBACK_EMBEDDINGS else get_cross_encoder()
 
     if model != "fallback" and model is not None:
         try:
-            pairs = [[query, chunk.get("text", "") + " " + (chunk.get("section") or "")] for chunk in chunks]
-            scores = model.predict(pairs)
+            scores = model.rerank(query, [chunk["enriched_text"] for chunk in chunks], batch_size=4)
 
             reranked = []
             for chunk, score in zip(chunks, scores):
@@ -50,7 +42,8 @@ def rerank_chunks(
             reranked.sort(key=lambda x: x["score"], reverse=True)
             top_chunks = reranked[:top_n]
             max_score = top_chunks[0]["score"] if top_chunks else 0.0
-            is_relevant = max_score >= min_relevance_score
+            top_chunks = [chunk for chunk in top_chunks if chunk["score"] >= min_relevance_score]
+            is_relevant = bool(top_chunks)
 
             return {
                 "is_relevant": is_relevant,

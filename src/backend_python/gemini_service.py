@@ -94,7 +94,7 @@ def find_definition(question: str, chunks: List[Dict[str, Any]]) -> str | None:
         words = r"[\w-]+\s+" * len(subject)
         expansion = re.compile(rf"\b({words})\({subject_pattern}\)", re.I)
     predicate = r"(?:is|are|means|stands? for|refers? to|stores?|manages?|collects?|processes?|provides?|performs?|handles?|uses?)\b"
-    direct = re.compile(rf"(?:^|[\n.!?]\s*)[ \t]*((?:the\s+)?{subject_pattern}\s+{predicate})", re.I)
+    direct = re.compile(rf"(?:^|[\n.!?]\s*)[ \t]*((?:(?:an?|the)\s+)?{subject_pattern}\s+{predicate})", re.I)
     definitions = []
     for chunk in chunks:
         text = chunk["text"]
@@ -142,13 +142,47 @@ def select_answer_sentences(question: str, chunks: List[Dict[str, Any]]) -> str:
     return ranked[0]
 
 
-def generate_rag_answer(question: str, context_chunks: List[Dict[str, Any]]) -> str:
+def comparison_topics(question: str) -> list[str]:
+    match = re.fullmatch(
+        r"(?:what\s+(?:is|are)\s+(?:the\s+)?differences?\s+between|compare)\s+(.+?)\s+(?:and|with|vs\.?)\s+(.+?)[?.!]*",
+        question.strip(), re.I,
+    )
+    return list(match.groups()) if match else []
+
+
+def generate_rag_answer(question: str, context_chunks: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
     if not context_chunks:
-        return NO_DOCUMENT_ANSWER
+        return NO_DOCUMENT_ANSWER, []
+
+    def local_answer():
+        topics = comparison_topics(question)
+        if topics:
+            evidence = []
+            lines = []
+            for topic in topics:
+                sentence = find_definition(f"Define {topic}", context_chunks)
+                if sentence:
+                    supporting_chunk = next(chunk for chunk in context_chunks if sentence in " ".join(chunk["text"].split()))
+                    evidence.append({**supporting_chunk, "citation_text": sentence})
+                    lines.append(f"- **{topic}** {sentence}")
+            if len(lines) < len(topics):
+                lines.append("The available passages do not define both topics clearly enough for a full comparison.")
+            return ("\n".join(lines), evidence) if evidence else (NO_DOCUMENT_ANSWER, [])
+        answer = select_answer_sentences(question, context_chunks)
+        if answer == NO_DOCUMENT_ANSWER:
+            return answer, []
+        sentences = [part.removeprefix("- ").strip() for part in re.split(r"\n+", answer) if part.strip()]
+        evidence = []
+        for chunk in context_chunks:
+            normalized = " ".join(chunk["text"].split())
+            matching = [sentence for sentence in sentences if sentence in normalized]
+            if matching:
+                evidence.append({**chunk, "citation_text": " ".join(matching)})
+        return answer, evidence
 
     client = get_genai_client()
     if not client:
-        return select_answer_sentences(question, context_chunks)
+        return local_answer()
 
     formatted_context = []
     for idx, chunk in enumerate(context_chunks, start=1):
@@ -169,7 +203,9 @@ def generate_rag_answer(question: str, context_chunks: List[Dict[str, Any]]) -> 
 USER QUESTION:
 {question}
 
-Answer only the question above. Lead with the requested fact and stop once the question is answered."""
+Answer only the question above. For a comparison, cover each topic and identify the differences supported by the context.
+Return a JSON object with an answer string and a sources array of the 1-based chunk numbers that directly support the answer.
+Use an empty sources array if the documents cannot answer the question."""
 
     try:
         def _call(model_name: str):
@@ -179,7 +215,13 @@ Answer only the question above. Lead with the requested fact and stop once the q
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
-                    temperature=config.LLM_TEMPERATURE
+                    temperature=config.LLM_TEMPERATURE,
+                    response_mime_type="application/json",
+                    response_schema={
+                        "type": "OBJECT",
+                        "properties": {"answer": {"type": "STRING"}, "sources": {"type": "ARRAY", "items": {"type": "INTEGER"}}},
+                        "required": ["answer", "sources"],
+                    },
                 )
             )
 
@@ -195,12 +237,18 @@ Answer only the question above. Lead with the requested fact and stop once the q
                 raise model_err
 
         text = response.text if response and response.text else ""
-        if text.strip():
-            return text.strip()
-        return select_answer_sentences(question, context_chunks)
+        result = json.loads(text)
+        answer = result["answer"].strip()
+        if answer == NO_DOCUMENT_ANSWER:
+            return answer, []
+        indices = result["sources"]
+        if answer and isinstance(indices, list) and indices and all(type(i) is int and 1 <= i <= len(context_chunks) for i in indices):
+            return answer, [context_chunks[i - 1] for i in dict.fromkeys(indices)]
+        return local_answer()
     except Exception as err:
-        print(f"[Gemini Service] Grounded generation failed ({type(err).__name__}); selecting relevant evidence.")
-        return select_answer_sentences(question, context_chunks)
+        status = getattr(err, "code", None)
+        print(f"[Gemini Service] Grounded generation failed ({type(err).__name__}, code={status}); selecting relevant evidence.")
+        return local_answer()
 
 
 def generate_suggested_questions(question: str, answer_text: str) -> List[str]:

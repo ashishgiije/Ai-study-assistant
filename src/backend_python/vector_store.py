@@ -6,7 +6,7 @@ import time
 from threading import RLock
 from typing import List, Dict, Any, Optional
 from src.backend_python.config import config
-from src.backend_python.embeddings import generate_embedding, cosine_similarity, fallback_embedding, search_terms
+from src.backend_python.embeddings import generate_embeddings, cosine_similarity, fallback_embedding, search_terms
 
 VECTOR_DB_FILE = os.path.abspath(os.getenv("VECTOR_STORE_PATH", "edumind_vectors.json"))
 
@@ -100,6 +100,14 @@ class VectorStoreService:
                 )
             except Exception:
                 pass
+            try:
+                self.client.create_payload_index(
+                    collection_name=config.QDRANT_COLLECTION,
+                    field_name="embedding_kind",
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                )
+            except Exception:
+                pass
         except Exception as e:
             raise RuntimeError("Qdrant collection is unavailable") from e
 
@@ -108,13 +116,13 @@ class VectorStoreService:
             return
 
         points = []
-        for chunk in chunks:
-            vector = generate_embedding(chunk["enriched_text"])
+        embedding_kind, vectors = generate_embeddings([chunk["enriched_text"] for chunk in chunks])
+        for chunk, vector in zip(chunks, vectors):
             point = {
                 "id": chunk["chunk_id"],
                 "vector": vector,
                 "payload": {
-                    "embedding_kind": "term-hash-v2" if config.USE_FALLBACK_EMBEDDINGS else config.EMBEDDING_MODEL,
+                    "embedding_kind": embedding_kind,
                     "chat_id": chunk["chat_id"],
                     "document_id": chunk["document_id"],
                     "document_name": chunk["document_name"],
@@ -135,9 +143,9 @@ class VectorStoreService:
             self.save_memory_store([p for p in self.memory_store if p["id"] not in chunk_ids] + points)
 
         # 2. Add to Qdrant Cloud if active
-        if not config.USE_FALLBACK_EMBEDDINGS:
+        if embedding_kind != "term-hash-v2":
             self._init_qdrant_lazy()
-        if self.qdrant_enabled and not config.USE_FALLBACK_EMBEDDINGS:
+        if self.qdrant_enabled and embedding_kind != "term-hash-v2":
             try:
                 from qdrant_client.http import models
                 qdrant_points = [
@@ -158,16 +166,17 @@ class VectorStoreService:
         if not current_chat_id:
             raise ValueError("Search failed: chat_id filter is strictly required")
 
-        query_vector = generate_embedding(query)
+        embedding_kind, (query_vector,) = generate_embeddings([query], query=True)
 
 
         # Try Qdrant search if enabled
-        if not config.USE_FALLBACK_EMBEDDINGS:
+        if embedding_kind != "term-hash-v2":
             self._init_qdrant_lazy()
-        if self.qdrant_enabled and not config.USE_FALLBACK_EMBEDDINGS:
+        if self.qdrant_enabled and embedding_kind != "term-hash-v2":
             try:
                 from qdrant_client.http import models
                 must_conditions = [models.FieldCondition(key="chat_id", match=models.MatchValue(value=current_chat_id))]
+                must_conditions.append(models.FieldCondition(key="embedding_kind", match=models.MatchValue(value=embedding_kind)))
                 if document_id:
                     must_conditions.append(models.FieldCondition(key="document_id", match=models.MatchValue(value=document_id)))
                 
@@ -212,12 +221,17 @@ class VectorStoreService:
         for p in isolated_points:
             payload = p["payload"]
             vector = p["vector"]
-            if config.USE_FALLBACK_EMBEDDINGS and payload.get("embedding_kind") != "term-hash-v2":
-                vector = fallback_embedding(payload["enriched_text"])
-            similarity = cosine_similarity(query_vector, vector)
-            if config.USE_FALLBACK_EMBEDDINGS and query_terms:
+            stored_kind = payload.get("embedding_kind")
+            if stored_kind == embedding_kind:
+                similarity = cosine_similarity(query_vector, vector)
+            elif embedding_kind == "term-hash-v2":
+                similarity = cosine_similarity(query_vector, fallback_embedding(payload["enriched_text"]))
+            else:
+                similarity = 0.0
+            if query_terms:
                 coverage = len(query_terms & set(search_terms(payload["text"]))) / len(query_terms)
-                similarity = max(0, similarity) * 0.4 + coverage * 0.6
+                if embedding_kind == "term-hash-v2" or stored_kind != embedding_kind:
+                    similarity = max(0, similarity) * 0.4 + coverage * 0.6
             scored_points.append({"point": p, "score": similarity})
 
         # Use nlargest for efficient top‑k selection

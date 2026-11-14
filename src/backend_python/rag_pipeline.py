@@ -2,7 +2,7 @@ from typing import Dict, Any, List, Optional
 from src.backend_python.db import db_service
 from src.backend_python.vector_store import vector_store
 from src.backend_python.reranker import rerank_chunks
-from src.backend_python.gemini_service import NO_DOCUMENT_ANSWER, find_definition, generate_rag_answer, get_genai_client, call_gemini_with_retry
+from src.backend_python.gemini_service import NO_DOCUMENT_ANSWER, comparison_topics, find_definition, generate_rag_answer, get_genai_client, call_gemini_with_retry
 from src.backend_python.config import config
 from src.backend_python.document_answers import extract_requested_content
 
@@ -81,6 +81,15 @@ def process_question(chat_id: str, question: str, document_id: Optional[str] = N
         ) if indexed_docs and (not document_id or document_id in indexed_docs) else []
         retrieved_chunks = [chunk for chunk in retrieved_chunks if chunk["document_id"] in indexed_docs]
 
+        topics = comparison_topics(question)
+        topic_chunks = []
+        if indexed_docs:
+            for topic in topics:
+                candidates = vector_store.search(chat_id, f"Define {topic}", document_id, config.RETRIEVAL_TOP_K)
+                candidates = [chunk for chunk in candidates if chunk["document_id"] in indexed_docs]
+                ranked = rerank_chunks(f"Define {topic}", candidates, top_n=2)["chunks"]
+                topic_chunks.extend(ranked)
+
         rerank_result = rerank_chunks(
             query=question,
             chunks=retrieved_chunks,
@@ -88,39 +97,37 @@ def process_question(chat_id: str, question: str, document_id: Optional[str] = N
             min_relevance_score=0.10
         )
 
-        is_relevant = rerank_result["is_relevant"]
-        final_chunks = rerank_result["chunks"]
-
-        definition = find_definition(question, retrieved_chunks)
-        if not definition and (not is_relevant or not final_chunks):
-            answer_text = NO_DOCUMENT_ANSWER
-            citations = []
-            suggested_questions = []
+        final_chunks = list({chunk["chunk_id"]: chunk for chunk in topic_chunks + rerank_result["chunks"]}.values())
+        definition = find_definition(question, retrieved_chunks) if not topics else None
+        if definition:
+            evidence_chunks = [
+                {**chunk, "citation_text": definition} for chunk in retrieved_chunks
+                if definition in " ".join(chunk["text"].split())
+            ][:1]
+            answer_text = definition
         else:
-            answer_text = definition or generate_rag_answer(question, final_chunks)
+            answer_text, evidence_chunks = generate_rag_answer(question, final_chunks)
 
-            citations = []
-            seen_keys = set()
-            evidence_chunks = (retrieved_chunks if definition else final_chunks) if answer_text != NO_DOCUMENT_ANSWER else []
-            exact_matches = [chunk for chunk in evidence_chunks if answer_text in " ".join(chunk["text"].split())]
-            for chunk in exact_matches[:1] or evidence_chunks:
-                key = f"{chunk['document_id']}_{chunk.get('page_number')}_{chunk.get('section')}"
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    source_text = answer_text if exact_matches else chunk["text"]
-                    excerpt = source_text[:180] + ("..." if len(source_text) > 180 else "")
-                    citations.append({
-                        "document_id": chunk["document_id"],
-                        "document_name": chunk["document_name"],
-                        "file_type": chunk["file_type"],
-                        "page_number": chunk.get("page_number"),
-                        "section": chunk.get("section"),
-                        "snippet": excerpt,
-                        "excerpt": excerpt,
-                        "relevance_score": round(chunk.get("score", 0.0), 3)
-                    })
-
-            suggested_questions = []
+        citations = []
+        seen = set()
+        for chunk in evidence_chunks:
+            key = (chunk["document_id"], chunk.get("page_number"), chunk.get("section"))
+            if key in seen:
+                continue
+            seen.add(key)
+            source_text = chunk.get("citation_text") or chunk["text"]
+            excerpt = source_text[:180] + ("..." if len(source_text) > 180 else "")
+            citations.append({
+                "document_id": chunk["document_id"],
+                "document_name": chunk["document_name"],
+                "file_type": chunk["file_type"],
+                "page_number": chunk.get("page_number"),
+                "section": chunk.get("section"),
+                "snippet": excerpt,
+                "excerpt": excerpt,
+                "relevance_score": round(chunk.get("score", 0.0), 3)
+            })
+        suggested_questions = []
 
     # Save assistant response message to DB
     assistant_msg = db_service.add_message(

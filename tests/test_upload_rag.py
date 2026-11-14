@@ -2,6 +2,7 @@ import io
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -58,6 +59,30 @@ class UploadTests(unittest.TestCase):
         self.upload("notes.txt", b"Photosynthesis turns light into chemical energy.")
         response = self.client.post(self.chat + "/messages", json={"question": "Who invented basketball?"})
         self.assertEqual(response.json()["sources"], [])
+
+    def test_comparison_uses_sources_from_both_documents(self):
+        tree = self.upload("tree.txt", b"A decision tree uses a single tree to split data.").json()["documents"][0]
+        forest = self.upload("forest.txt", b"A random forest uses an ensemble of decision trees.").json()["documents"][0]
+        result = self.client.post(self.chat + "/messages", json={
+            "question": "What is the difference between a random forest and a decision tree?",
+        }).json()
+        self.assertIn("single tree", result["answer"])
+        self.assertIn("ensemble", result["answer"])
+        self.assertEqual({source["document_id"] for source in result["sources"]}, {tree["id"], forest["id"]})
+
+    def test_generated_answer_only_cites_selected_context(self):
+        from src.backend_python.gemini_service import generate_rag_answer
+        chunks = [
+            {"text": "An unrelated reference.", "document_name": "intro.txt"},
+            {"text": "Plants convert light into chemical energy.", "document_name": "biology.txt"},
+        ]
+        client = SimpleNamespace(models=SimpleNamespace(generate_content=lambda **kwargs: SimpleNamespace(
+            text='{"answer":"Plants convert light into chemical energy.","sources":[2,2]}',
+        )))
+        with patch("src.backend_python.gemini_service.get_genai_client", return_value=client):
+            answer, sources = generate_rag_answer("What do plants do with light?", chunks)
+        self.assertEqual(answer, "Plants convert light into chemical energy.")
+        self.assertEqual(sources, [chunks[1]])
 
     def test_definitions_outrank_passing_mentions(self):
         self.upload("references.txt", b"The output is written back to HDFS for reporting. "

@@ -13,12 +13,19 @@ def get_genai_client():
         if api_key:
             try:
                 from google import genai
-                _genai_client = genai.Client(api_key=api_key)
+                from google.genai import types
+                _genai_client = genai.Client(
+                    api_key=api_key,
+                    http_options=types.HttpOptions(
+                        timeout=8000,
+                        retry_options=types.HttpRetryOptions(attempts=1),
+                    ),
+                )
             except Exception as e:
                 print(f"Error initializing google-genai Client: {e}")
     return _genai_client
 
-def call_gemini_with_retry(api_fn, max_retries: int = 2, initial_delay: float = 2.0):
+def call_gemini_with_retry(api_fn, max_retries: int = 0, initial_delay: float = 2.0):
     attempt = 0
     while True:
         try:
@@ -67,11 +74,11 @@ def generate_rag_answer(question: str, context_chunks: List[Dict[str, Any]]) -> 
     if not context_chunks:
         return "I couldn’t find this information in the documents uploaded to this study chat."
 
+    context_str = "\n".join([f"- {c['text']}" for c in context_chunks[:3]])
+    extractive_answer = f"Based on the uploaded documents:\n\n{context_str}"
     client = get_genai_client()
     if not client:
-        # Fallback summary if API client is not configured
-        context_str = "\n".join([f"- {c['text']}" for c in context_chunks[:3]])
-        return f"Based on the uploaded documents:\n\n{context_str}"
+        return extractive_answer
 
     formatted_context = []
     for idx, chunk in enumerate(context_chunks, start=1):
@@ -122,12 +129,8 @@ Provide a clear, accurate, and structured answer strictly based on the context a
             return text.strip()
         return "I couldn’t find this information in the documents uploaded to this study chat."
     except Exception as err:
-        err_str = str(err)
-        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "Quota exceeded" in err_str:
-            return "⚡ Gemini API quota limit reached (20 requests/min free tier limit). Please wait 20-30 seconds and try again, or check your API key quota in Settings > Secrets."
-        if "API_KEY_INVALID" in err_str or "403" in err_str:
-            return "🔑 Invalid or missing Gemini API key. Please check your GEMINI_API_KEY configuration in Settings > Secrets."
-        return f"I encountered an issue generating the response: {err_str}. Please try asking again in a few moments."
+        print(f"[Gemini Service] Grounded generation failed ({type(err).__name__}); returning retrieved excerpts.")
+        return extractive_answer
 
 
 def generate_suggested_questions(question: str, answer_text: str) -> List[str]:
@@ -137,7 +140,7 @@ def generate_suggested_questions(question: str, answer_text: str) -> List[str]:
         "Could you summarize this into 3 main bullet points?"
     ]
 
-    if answer_text.startswith("⚡") or answer_text.startswith("🔑") or answer_text.startswith("I couldn"):
+    if answer_text.startswith(("Based on the uploaded documents:", "I couldn", "EduMind AI servers are currently")):
         return fallback_questions
 
     client = get_genai_client()
@@ -160,7 +163,7 @@ def generate_suggested_questions(question: str, answer_text: str) -> List[str]:
             )
 
 
-        response = call_gemini_with_retry(_call, max_retries=1, initial_delay=1.0)
+        response = call_gemini_with_retry(_call)
         if response and response.text:
             parsed = json.loads(response.text.strip())
             if isinstance(parsed, list) and len(parsed) >= 1:

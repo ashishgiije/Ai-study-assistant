@@ -59,6 +59,17 @@ class UploadTests(unittest.TestCase):
         response = self.client.post(self.chat + "/messages", json={"question": "Who invented basketball?"})
         self.assertEqual(response.json()["sources"], [])
 
+    def test_provider_timeout_returns_cited_excerpts(self):
+        self.upload("notes.txt", b"Photosynthesis turns light into chemical energy.")
+        from src.backend_python import gemini_service
+        with patch.object(gemini_service, "get_genai_client", return_value=object()) as client:
+            with patch.object(gemini_service, "call_gemini_with_retry", side_effect=TimeoutError):
+                response = self.client.post(self.chat + "/messages", json={"question": "What does photosynthesis do?"})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("chemical energy", response.json()["answer"])
+        self.assertEqual(len(response.json()["sources"]), 1)
+        client.assert_called_once()
+
     def test_empty_and_corrupt_documents_report_failure(self):
         for name in ("blank.txt", "broken.pdf", "broken.docx"):
             with self.subTest(name=name):

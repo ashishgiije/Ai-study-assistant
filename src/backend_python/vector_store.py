@@ -12,10 +12,20 @@ VECTOR_DB_FILE = os.path.abspath(os.getenv("VECTOR_STORE_PATH", "edumind_vectors
 
 
 def qdrant_error_summary(error: Exception) -> str:
-    status = getattr(error, "status_code", None)
-    if isinstance(status, int):
-        return f"HTTP {status}"
-    return type(error).__name__
+    types = []
+    current = error
+    for _ in range(5):
+        status = getattr(current, "status_code", None)
+        if isinstance(status, int):
+            return f"HTTP {status}"
+        name = type(current).__name__
+        if name not in types:
+            types.append(name)
+        cause = getattr(current, "source", None) or current.__cause__
+        if not isinstance(cause, Exception):
+            break
+        current = cause
+    return " / ".join(types)
 
 
 def string_to_uuid(s: str) -> str:

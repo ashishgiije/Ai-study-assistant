@@ -10,6 +10,14 @@ from src.backend_python.embeddings import generate_embeddings, cosine_similarity
 
 VECTOR_DB_FILE = os.path.abspath(os.getenv("VECTOR_STORE_PATH", "edumind_vectors.json"))
 
+
+def qdrant_error_summary(error: Exception) -> str:
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int):
+        return f"HTTP {status}"
+    return type(error).__name__
+
+
 def string_to_uuid(s: str) -> str:
     h = hashlib.sha256(s.encode("utf-8")).hexdigest()
     return f"{h[:8]}-{h[8:12]}-4{h[13:16]}-8{h[17:20]}-{h[20:32]}"
@@ -33,8 +41,8 @@ class VectorStoreService:
             try:
                 from qdrant_client import QdrantClient
                 self.client = QdrantClient(
-                    url=config.QDRANT_URL,
-                    api_key=config.QDRANT_API_KEY or None,
+                    url=config.QDRANT_URL.strip(),
+                    api_key=config.QDRANT_API_KEY.strip() or None,
                     timeout=3.0,
                     check_compatibility=False,
                 )
@@ -45,7 +53,7 @@ class VectorStoreService:
             except Exception as e:
                 self.client = None
                 self._qdrant_retry_at = time.monotonic() + 60
-                print(f"[EduMind VectorStore] Qdrant Client init failed ({e}), using local vector store.")
+                print(f"[EduMind VectorStore] Qdrant connection or collection setup failed ({qdrant_error_summary(e)}); using local vectors.")
 
 
     def load_memory_store(self):
@@ -72,44 +80,27 @@ class VectorStoreService:
     def _ensure_collection(self):
         if not self.client:
             return
-        try:
-            from qdrant_client.http import models
-            collections = self.client.get_collections()
-            exists = any(c.name == config.QDRANT_COLLECTION for c in collections.collections)
-            if not exists:
-                self.client.create_collection(
-                    collection_name=config.QDRANT_COLLECTION,
-                    vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE)
-                )
+        from qdrant_client.http import models
 
-            # Ensure payload indexes
-            try:
+        name = config.QDRANT_COLLECTION
+        if not self.client.collection_exists(name):
+            self.client.create_collection(
+                collection_name=name,
+                vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
+            )
+        collection = self.client.get_collection(name)
+        vectors = collection.config.params.vectors
+        if not isinstance(vectors, models.VectorParams) or vectors.size != 384 or vectors.distance != models.Distance.COSINE:
+            print("[EduMind VectorStore] Qdrant collection requires one unnamed 384-dimensional cosine vector.")
+            raise ValueError("Incompatible Qdrant collection")
+        for field in ("chat_id", "document_id", "embedding_kind"):
+            if field not in collection.payload_schema:
                 self.client.create_payload_index(
-                    collection_name=config.QDRANT_COLLECTION,
-                    field_name="chat_id",
-                    field_schema=models.PayloadSchemaType.KEYWORD
-                )
-            except Exception:
-                pass
-
-            try:
-                self.client.create_payload_index(
-                    collection_name=config.QDRANT_COLLECTION,
-                    field_name="document_id",
-                    field_schema=models.PayloadSchemaType.KEYWORD
-                )
-            except Exception:
-                pass
-            try:
-                self.client.create_payload_index(
-                    collection_name=config.QDRANT_COLLECTION,
-                    field_name="embedding_kind",
+                    collection_name=name,
+                    field_name=field,
                     field_schema=models.PayloadSchemaType.KEYWORD,
+                    wait=True,
                 )
-            except Exception:
-                pass
-        except Exception as e:
-            raise RuntimeError("Qdrant collection is unavailable") from e
 
     def add_chunks(self, chunks: List[Dict[str, Any]]):
         if not chunks:
@@ -157,10 +148,12 @@ class VectorStoreService:
                 ]
                 self.client.upsert(
                     collection_name=config.QDRANT_COLLECTION,
-                    points=qdrant_points
+                    points=qdrant_points,
+                    wait=True,
                 )
+                print(f"[EduMind VectorStore] Qdrant stored {len(qdrant_points)} chunk(s).")
             except Exception as e:
-                print(f"Qdrant upsert error: {e}")
+                print(f"[EduMind VectorStore] Qdrant upsert failed ({qdrant_error_summary(e)}).")
 
     def search(self, current_chat_id: str, query: str, document_id: Optional[str] = None, top_k: int = 10) -> List[Dict[str, Any]]:
         if not current_chat_id:
@@ -188,6 +181,7 @@ class VectorStoreService:
                 ).points
 
                 if qdrant_res:
+                    print(f"[EduMind VectorStore] Qdrant retrieved {len(qdrant_res)} chunk(s).")
                     return [
                         {
                             "chunk_id": res.payload.get("chunk_id", res.id),
@@ -206,7 +200,7 @@ class VectorStoreService:
                         for res in qdrant_res
                     ]
             except Exception as e:
-                print(f"Qdrant search error, falling back to local memory store: {e}")
+                print(f"[EduMind VectorStore] Qdrant search failed ({qdrant_error_summary(e)}); using local vectors.")
 
         # Local fallback: filter points for the current chat (and optional document)
         isolated_points = [p for p in self.memory_store if p["payload"]["chat_id"] == current_chat_id]
@@ -284,7 +278,7 @@ class VectorStoreService:
                     )
                 )
             except Exception as e:
-                print(f"Qdrant delete document vectors error: {e}")
+                print(f"[EduMind VectorStore] Qdrant document delete failed ({qdrant_error_summary(e)}).")
 
     def delete_chat_vectors(self, chat_id: str):
         if not config.USE_FALLBACK_EMBEDDINGS:
@@ -310,6 +304,6 @@ class VectorStoreService:
                     )
                 )
             except Exception as e:
-                print(f"Qdrant delete chat vectors error: {e}")
+                print(f"[EduMind VectorStore] Qdrant chat delete failed ({qdrant_error_summary(e)}).")
 
 vector_store = VectorStoreService()

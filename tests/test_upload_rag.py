@@ -60,6 +60,38 @@ class UploadTests(unittest.TestCase):
         response = self.client.post(self.chat + "/messages", json={"question": "Who invented basketball?"})
         self.assertEqual(response.json()["sources"], [])
 
+    def test_qdrant_indexes_searches_and_deletes_scoped_vectors(self):
+        import warnings
+        from qdrant_client import QdrantClient
+        from src.backend_python import vector_store as store_module
+
+        qdrant = QdrantClient(":memory:")
+        self.addCleanup(qdrant.close)
+        store = store_module.VectorStoreService()
+        vector = [1.0] + [0.0] * 383
+        with warnings.catch_warnings(), patch.object(store_module.config, "QDRANT_URL", "http://qdrant.test"):
+            warnings.filterwarnings("ignore", message="Payload indexes have no effect.*")
+            with patch("qdrant_client.QdrantClient", return_value=qdrant):
+                store._init_qdrant_lazy()
+            self.assertTrue(store.qdrant_enabled)
+            chunks = [{
+                "chunk_id": f"chunk-{chat}", "chat_id": chat, "document_id": "notes",
+                "document_name": "notes.txt", "file_type": "txt", "chunk_index": 0,
+                "text": "Study notes.", "enriched_text": "Study notes.",
+            } for chat in ("first-chat", "other-chat")]
+            def embeddings(texts, query=False):
+                return "BAAI/bge-small-en-v1.5", [vector for _ in texts]
+
+            with patch.object(store_module, "VECTOR_DB_FILE", str(Path(self.directory.name) / "qdrant-test.json")):
+                with patch.object(store_module, "generate_embeddings", side_effect=embeddings):
+                    store.add_chunks(chunks)
+                    store.memory_store.clear()
+                    self.assertEqual([r["chunk_id"] for r in store.search("first-chat", "notes", "notes")], ["chunk-first-chat"])
+                    self.assertEqual(store.search("first-chat", "notes", "wrong-document"), [])
+                    store.delete_document_vectors("first-chat", "notes")
+                    self.assertEqual(store.search("first-chat", "notes"), [])
+                    self.assertEqual(len(store.search("other-chat", "notes")), 1)
+
     def test_semantic_fallback_answers_without_shared_words(self):
         from src.backend_python.gemini_service import generate_rag_answer, NO_DOCUMENT_ANSWER
         chunk = {"text": "The Moon orbits Earth. Freshwater freezes at zero degrees Celsius.",

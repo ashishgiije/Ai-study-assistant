@@ -8,6 +8,14 @@ from src.backend_python.embeddings import cosine_similarity, generate_embeddings
 from src.backend_python.reranker import rerank_chunks
 
 _genai_client = None
+GEMINI_RATE_LIMIT_MESSAGE = "Gemini API limit reached. Please try again after the limit resets."
+
+
+def is_gemini_rate_limit(error: Exception) -> bool:
+    if str(getattr(error, "code", "")) == "429":
+        return True
+    message = str(error).casefold()
+    return "resource_exhausted" in message or "quota exceeded" in message
 
 def get_genai_client():
     global _genai_client
@@ -34,13 +42,7 @@ def call_gemini_with_retry(api_fn, max_retries: int = 0, initial_delay: float = 
         try:
             return api_fn()
         except Exception as err:
-            err_str = str(err)
-            is_rate_limit = (
-                "429" in err_str or
-                "RESOURCE_EXHAUSTED" in err_str or
-                "Quota exceeded" in err_str
-            )
-            if is_rate_limit and attempt < max_retries:
+            if is_gemini_rate_limit(err) and attempt < max_retries:
                 attempt += 1
                 delay = initial_delay * (2 ** (attempt - 1))
                 print(f"[Gemini API Rate Limit 429] Retrying in {delay}s (attempt {attempt}/{max_retries})...")
@@ -275,6 +277,9 @@ Use an empty sources array if the documents cannot answer the question."""
             return answer, [context_chunks[i - 1] for i in dict.fromkeys(indices)]
         return local_answer()
     except Exception as err:
+        if is_gemini_rate_limit(err):
+            print("[Gemini Service] Grounded generation hit the Gemini API limit (429).")
+            return GEMINI_RATE_LIMIT_MESSAGE, []
         status = getattr(err, "code", None)
         print(f"[Gemini Service] Grounded generation failed ({type(err).__name__}, code={status}); selecting relevant evidence.")
         return local_answer()

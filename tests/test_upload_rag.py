@@ -156,6 +156,25 @@ class UploadTests(unittest.TestCase):
         self.assertEqual(len(response.json()["sources"]), 1)
         client.assert_called_once()
 
+    def test_gemini_limit_is_displayed_without_fallback(self):
+        from src.backend_python.gemini_service import GEMINI_RATE_LIMIT_MESSAGE
+
+        class RateLimitError(Exception):
+            code = 429
+
+        backend = "src.backend_python"
+        for module in ("rag_pipeline", "gemini_service"):
+            with self.subTest(module=module):
+                if module == "gemini_service":
+                    self.upload("notes.txt", b"Photosynthesis turns light into chemical energy.")
+                with patch(f"{backend}.{module}.get_genai_client", return_value=object()):
+                    with patch(f"{backend}.{module}.call_gemini_with_retry", side_effect=RateLimitError):
+                        response = self.client.post(self.chat + "/messages", json={"question": "What does photosynthesis do?"})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["answer"], GEMINI_RATE_LIMIT_MESSAGE)
+                self.assertEqual(response.json()["sources"], [])
+        self.assertEqual(self.client.get(self.chat + "/messages").json()[-1]["content"], GEMINI_RATE_LIMIT_MESSAGE)
+
     def test_resume_phone_and_all_projects_have_different_answer_scopes(self):
         response = self.upload("resume.txt", (
             b"Sample Candidate\nPhone: +1 (202) 555-0142\n\nProjects\n"

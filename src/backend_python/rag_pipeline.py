@@ -3,6 +3,7 @@ from src.backend_python.db import db_service
 from src.backend_python.vector_store import vector_store
 from src.backend_python.reranker import rerank_chunks
 from src.backend_python.gemini_service import NO_DOCUMENT_ANSWER, comparison_topics, find_definition, generate_rag_answer, get_genai_client, call_gemini_with_retry
+from src.backend_python.gemini_service import GEMINI_RATE_LIMIT_MESSAGE, is_gemini_rate_limit
 from src.backend_python.config import config
 from src.backend_python.document_answers import extract_requested_content, find_definition_in_documents
 
@@ -44,6 +45,9 @@ def generate_general_study_answer(question: str) -> str:
             return text.strip()
         return "I am ready to help you study! Upload your study documents or ask any question to get started."
     except Exception as err:
+        if is_gemini_rate_limit(err):
+            print("[Gemini Service] General study generation hit the Gemini API limit (429).")
+            return GEMINI_RATE_LIMIT_MESSAGE
         err_str = str(err)
         return f"EduMind AI servers are currently experiencing high demand: {err_str}"
 

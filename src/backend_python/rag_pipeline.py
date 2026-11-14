@@ -113,20 +113,27 @@ def process_question(chat_id: str, question: str, document_id: Optional[str] = N
         if not final_chunks:
             final_chunks = [chunk for chunk in retrieved_chunks if chunk.get("dense_score", 0.0) >= 0.60][:config.RERANK_TOP_N]
         definition = find_definition(question, retrieved_chunks) if not topics else None
+        definition_sources = []
         if definition:
-            evidence_chunks = [
-                {**chunk, "citation_text": definition} for chunk in retrieved_chunks
+            definition_sources = [
+                chunk for chunk in retrieved_chunks
                 if definition in " ".join(chunk["text"].split())
             ][:1]
-            answer_text = definition
         else:
             scanned_definition = find_definition_in_documents(question, selected_docs) if not topics else None
             if scanned_definition:
-                answer_text, evidence_chunks = scanned_definition
-            else:
-                answer_text, evidence_chunks = generate_rag_answer(question, final_chunks)
-                if not retrieved_chunks:
-                    answer_text = "The document search index is unavailable for this chat. Upload the document again to rebuild it."
+                definition, definition_sources = scanned_definition
+
+        if definition and definition_sources:
+            supporting_chunk = definition_sources[0]
+            answer_text, evidence_chunks = generate_rag_answer(
+                question, definition_sources + [chunk for chunk in final_chunks if chunk != supporting_chunk],
+                extracted_definition=(definition, supporting_chunk),
+            )
+        else:
+            answer_text, evidence_chunks = generate_rag_answer(question, final_chunks)
+            if not retrieved_chunks:
+                answer_text = "The document search index is unavailable for this chat. Upload the document again to rebuild it."
 
         citations = []
         seen = set()

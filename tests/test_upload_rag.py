@@ -126,6 +126,32 @@ class UploadTests(unittest.TestCase):
         self.assertIn("Hadoop Distributed File System", result["answer"])
         self.assertEqual(result["sources"][0]["document_id"], doc["id"])
 
+    def test_concept_definition_includes_supported_details(self):
+        doc = self.upload("pig.txt", (
+            b"Pig is a platform for expressing data transformations in Pig Latin. "
+            b"Pig parses scripts into a logical plan and can run them as MapReduce jobs. "
+            b"Pig supports operations like LOAD, FILTER, and GROUP. "
+            b"HiveQL uses a declarative style."
+        )).json()["documents"][0]
+        def ask():
+            return self.client.post(self.chat + "/messages", json={
+                "question": "What is Pig?", "document_id": doc["id"],
+            }).raise_for_status().json()
+
+        result = ask()
+        self.assertIn("Pig Latin", result["answer"])
+        self.assertIn("MapReduce", result["answer"])
+        self.assertIn("FILTER", result["answer"])
+        self.assertNotIn("HiveQL", result["answer"])
+        self.assertEqual(result["sources"][0]["document_id"], doc["id"])
+
+        generated = SimpleNamespace(text='{"answer":"Pig runs data transformations in Pig Latin and can execute them as MapReduce jobs.","sources":[1]}')
+        service = "src.backend_python.gemini_service"
+        with patch(f"{service}.get_genai_client", return_value=object()):
+            with patch(f"{service}.call_gemini_with_retry", return_value=generated) as call:
+                self.assertIn("can execute them", ask()["answer"])
+                call.assert_called_once()
+
     def test_stale_document_selection_reports_upload_problem(self):
         self.upload("other.txt", b"Nothing about Hadoop here.")
         result = self.client.post(self.chat + "/messages", json={

@@ -115,6 +115,23 @@ def find_definition(question: str, chunks: List[Dict[str, Any]]) -> str | None:
     return max(definitions, key=lambda item: item[0])[1] if definitions else None
 
 
+def expand_definition(question: str, definition: str, evidence: Dict[str, Any]) -> str:
+    """Include nearby facts explicitly about the defined concept."""
+    match = DEFINITION_QUESTION.fullmatch(question.strip())
+    if not match or not match.group("term"):
+        return definition
+    term = re.sub(r"^(?:an?|the)\s+", "", match.group("term"), flags=re.I)
+    subject = re.compile(rf"^(?:(?:an?|the)\s+)?{re.escape(term)}\b", re.I)
+    text = " ".join(evidence["text"].split())
+    _, found, following = text.partition(definition)
+    if not found:
+        return definition
+    sentences = re.split(r"(?<=[.!?])\s+", following.strip(), maxsplit=8)
+    details = [sentence for sentence in sentences[:8]
+               if subject.match(sentence) and sentence.endswith((".", "!", "?"))]
+    return " ".join(dict.fromkeys([definition, *details[:2]]))
+
+
 def select_answer_sentences(question: str, chunks: List[Dict[str, Any]]) -> str:
     """Rank individual evidence sentences for the local answer path."""
     definition = find_definition(question, chunks)
@@ -181,11 +198,19 @@ def comparison_topics(question: str) -> list[str]:
     return list(match.groups()) if match else []
 
 
-def generate_rag_answer(question: str, context_chunks: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
+def generate_rag_answer(
+    question: str,
+    context_chunks: List[Dict[str, Any]],
+    extracted_definition: tuple[str, Dict[str, Any]] | None = None,
+) -> tuple[str, List[Dict[str, Any]]]:
     if not context_chunks:
         return NO_DOCUMENT_ANSWER, []
 
     def local_answer():
+        if extracted_definition:
+            definition, evidence = extracted_definition
+            answer = expand_definition(question, definition, evidence)
+            return answer, [{**evidence, "citation_text": definition}]
         topics = comparison_topics(question)
         if topics:
             evidence = []
@@ -212,6 +237,9 @@ def generate_rag_answer(question: str, context_chunks: List[Dict[str, Any]]) -> 
         return answer, evidence
 
     client = get_genai_client()
+    definition_request = DEFINITION_QUESTION.fullmatch(question.strip())
+    if extracted_definition and definition_request and definition_request.group("acronym"):
+        return local_answer()
     if not client:
         return local_answer()
 
@@ -235,6 +263,7 @@ USER QUESTION:
 {question}
 
 Answer only the question above. For a comparison, cover each topic and identify the differences supported by the context.
+For a concept definition, explain what it is and add one or two relevant facts about what it does, how it works, or where it is used when the source supports them.
 Return a JSON object with an answer string and a sources array of the 1-based chunk numbers that directly support the answer.
 Use an empty sources array if the documents cannot answer the question."""
 
@@ -271,7 +300,7 @@ Use an empty sources array if the documents cannot answer the question."""
         result = json.loads(text)
         answer = result["answer"].strip()
         if answer == NO_DOCUMENT_ANSWER:
-            return answer, []
+            return local_answer() if extracted_definition else (answer, [])
         indices = result["sources"]
         if answer and isinstance(indices, list) and indices and all(type(i) is int and 1 <= i <= len(context_chunks) for i in indices):
             return answer, [context_chunks[i - 1] for i in dict.fromkeys(indices)]

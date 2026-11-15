@@ -11,6 +11,7 @@ class Config:
     # Set USE_FALLBACK_EMBEDDINGS=true in Render env vars to skip SentenceTransformer
     # model download (prevents OOM crash on free-tier 512MB containers)
     USE_FALLBACK_EMBEDDINGS: bool = os.getenv("USE_FALLBACK_EMBEDDINGS", "false").lower() == "true"
+    USE_FALLBACK_RERANKER: bool = os.getenv("USE_FALLBACK_RERANKER", "false").lower() == "true"
     QDRANT_URL: str = os.getenv("QDRANT_URL", "")
     QDRANT_API_KEY: str = os.getenv("QDRANT_API_KEY", "")
     QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "edumind_chunks")

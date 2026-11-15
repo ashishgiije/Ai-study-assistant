@@ -41,6 +41,23 @@ class UploadTests(unittest.TestCase):
     def upload(self, name, data):
         return self.client.post(self.chat + "/documents", files={"files": (name, data)})
 
+    def test_lightweight_reranker_can_keep_model_embeddings_enabled(self):
+        from src.backend_python import reranker
+
+        passages = [
+            {"chunk_id": "a", "text": "Maple trees grow in the garden.", "score": 0.55},
+            {"chunk_id": "b", "text": "A telescope observes distant stars.", "score": 0.50},
+        ]
+        with (
+            patch.object(reranker.config, "USE_FALLBACK_EMBEDDINGS", False),
+            patch.object(reranker.config, "USE_FALLBACK_RERANKER", True),
+            patch.object(reranker, "get_cross_encoder") as get_model,
+        ):
+            result = reranker.rerank_chunks("telescope", passages, top_n=1)
+
+        get_model.assert_not_called()
+        self.assertEqual(result["chunks"][0]["chunk_id"], "b")
+
     def test_text_answer_with_citation_and_cleanup(self):
         response = self.upload("notes.txt", b"Photosynthesis turns light into chemical energy. Chlorophyll absorbs light.")
         self.assertEqual(response.status_code, 201, response.text)

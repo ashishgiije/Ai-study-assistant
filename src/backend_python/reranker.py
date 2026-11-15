@@ -25,7 +25,8 @@ def rerank_chunks(
 ) -> Dict[str, Any]:
     if not chunks:
         return {"is_relevant": False, "chunks": [], "max_score": 0.0}
-    model = "fallback" if config.USE_FALLBACK_EMBEDDINGS else get_cross_encoder()
+    use_fallback = config.USE_FALLBACK_EMBEDDINGS or config.USE_FALLBACK_RERANKER
+    model = "fallback" if use_fallback else get_cross_encoder()
 
     if model != "fallback" and model is not None:
         try:

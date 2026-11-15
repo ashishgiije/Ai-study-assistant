@@ -2,6 +2,7 @@ import os
 import math
 import re
 from hashlib import blake2b
+from threading import Lock
 from typing import List
 
 # Limit thread counts to conserve memory on constrained platforms (e.g., Render/Koyeb free tiers)
@@ -14,6 +15,7 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 from src.backend_python.config import config
 
 _st_model = None
+_inference_lock = Lock()
 
 def get_embedding_model():
     global _st_model
@@ -27,7 +29,11 @@ def get_embedding_model():
         try:
             from fastembed import TextEmbedding
             print(f"Loading embedding model: {config.EMBEDDING_MODEL}...")
-            _st_model = TextEmbedding(model_name=config.EMBEDDING_MODEL, threads=1)
+            _st_model = TextEmbedding(
+                model_name=config.EMBEDDING_MODEL,
+                threads=1,
+                enable_cpu_mem_arena=False,
+            )
             print("Embedding model loaded successfully.")
         except Exception as e:
             print(f"Warning: Could not load SentenceTransformer ({e}). Using deterministic fallback embeddings.")
@@ -53,13 +59,15 @@ def fallback_embedding(text: str, dim: int = 384) -> List[float]:
     return vec
 
 def generate_embeddings(texts: List[str], query: bool = False) -> tuple[str, List[List[float]]]:
-    model = get_embedding_model()
-    if model != "fallback" and model is not None:
-        try:
-            vectors = model.query_embed(texts) if query else model.embed(texts, batch_size=8)
-            return config.EMBEDDING_MODEL, [vector.tolist() for vector in vectors]
-        except Exception as e:
-            print(f"Error encoding with SentenceTransformer: {e}")
+    # One inference at a time keeps concurrent uploads and queries within the service memory budget.
+    with _inference_lock:
+        model = get_embedding_model()
+        if model != "fallback" and model is not None:
+            try:
+                vectors = model.query_embed(texts, batch_size=1) if query else model.embed(texts, batch_size=1)
+                return config.EMBEDDING_MODEL, [vector.tolist() for vector in vectors]
+            except Exception as e:
+                print(f"Error encoding with FastEmbed: {e}")
 
     return "term-hash-v2", [fallback_embedding(text) for text in texts]
 

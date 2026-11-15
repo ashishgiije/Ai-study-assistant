@@ -41,6 +41,22 @@ class UploadTests(unittest.TestCase):
     def upload(self, name, data):
         return self.client.post(self.chat + "/documents", files={"files": (name, data)})
 
+    def test_document_and_query_embeddings_use_single_item_batches(self):
+        from src.backend_python import embeddings
+
+        vector = SimpleNamespace(tolist=lambda: [0.0] * 384)
+        with patch.object(embeddings, "get_embedding_model") as get_model:
+            model = get_model.return_value
+            model.embed.return_value = [vector, vector]
+            model.query_embed.return_value = [vector]
+            kind, vectors = embeddings.generate_embeddings(["first", "second"])
+            query_kind, _ = embeddings.generate_embeddings(["question"], query=True)
+
+        model.embed.assert_called_once_with(["first", "second"], batch_size=1)
+        model.query_embed.assert_called_once_with(["question"], batch_size=1)
+        self.assertEqual(len(vectors), 2)
+        self.assertEqual(kind, query_kind)
+
     def test_lightweight_reranker_can_keep_model_embeddings_enabled(self):
         from src.backend_python import reranker
 
